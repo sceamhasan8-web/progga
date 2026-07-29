@@ -1,0 +1,33 @@
+{
+  "name": "scholasticbase-school-management",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "firebase:seed": "node scripts/seedFirestoreSchema.mjs",
+    "firebase:deploy": "npx firebase-tools deploy --only firestore",
+    "dataconnect:deploy": "npx firebase-tools deploy --only dataconnect"
+  },
+  "dependencies": {
+    "firebase": "^10.14.1",
+    "git": "^0.1.5",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "react-router-dom": "^6.16.0"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-react": "^4.3.0",
+    "autoprefixer": "^10.5.4",
+    "postcss": "^8.5.23",
+    "tailwindcss": "^3.4.19",
+    "vite": "^5.4.1"
+  },
+  "allowScripts": {
+    "protobufjs@7.6.4": true,
+    "esbuild@0.21.5": true,
+    "vite@5.4.21": true
+  }
+}

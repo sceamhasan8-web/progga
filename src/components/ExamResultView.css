@@ -1,0 +1,582 @@
+@import url('https://fonts.googleapis.com/css2?family=Dancing+Script:wght@700&display=swap');
+
+/* Screen layout styles for transcript */
+.transcript-container {
+  border: 2px solid #a3b8cc;
+  padding: 30px;
+  border-radius: 12px;
+  background: #ffffff;
+  max-width: 850px;
+  margin: 20px auto;
+  box-shadow: 0 10px 40px rgba(15, 23, 42, 0.08);
+  font-family: 'Inter', system-ui, sans-serif;
+  color: #1e293b;
+  box-sizing: border-box;
+}
+
+/* Header Section */
+.transcript-header {
+  text-align: center;
+  margin-bottom: 24px;
+}
+
+.transcript-logo-wrapper {
+  margin-bottom: 12px;
+}
+
+.transcript-logo-img {
+  width: 72px;
+  height: 72px;
+  object-fit: contain;
+}
+
+.transcript-school-name {
+  font-size: 26px;
+  font-weight: 800;
+  color: #0f172a;
+  margin: 0 0 4px 0;
+  letter-spacing: -0.5px;
+}
+
+.transcript-school-meta {
+  font-size: 13px;
+  color: #64748b;
+  margin: 0 0 12px 0;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.transcript-session-capsule {
+  display: inline-block;
+  background: #f1f5f9;
+  color: #334155;
+  padding: 6px 18px;
+  border-radius: 30px;
+  font-size: 12px;
+  font-weight: 700;
+  border: 1px solid #e2e8f0;
+}
+
+/* Student Info Grid & Photo (Right-Aligned) */
+.transcript-student-section {
+  display: grid;
+  grid-template-columns: 1fr 120px;
+  gap: 24px;
+  align-items: start;
+  margin-bottom: 24px;
+}
+
+.transcript-student-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px 24px;
+}
+
+.transcript-info-field {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  border-bottom: 1px dashed #cbd5e1;
+  padding-bottom: 6px;
+}
+
+.transcript-info-label {
+  font-size: 13px;
+  color: #64748b;
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+}
+
+.transcript-info-value {
+  font-size: 13px;
+  color: #0f172a;
+  font-weight: 700;
+}
+
+.transcript-photo-box {
+  width: 120px;
+  height: 140px;
+  border: 2px solid #a3b8cc;
+  border-radius: 6px;
+  background: #f8fafc;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+}
+
+.transcript-photo-box img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.transcript-photo-placeholder {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  width: 100%;
+  color: #94a3b8;
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  text-align: center;
+  padding: 8px;
+}
+
+.transcript-photo-placeholder-icon {
+  font-size: 24px;
+  margin-bottom: 4px;
+}
+
+/* Academic Performance Table */
+.transcript-table-container {
+  width: 100%;
+  margin-bottom: 24px;
+  overflow-x: auto;
+}
+
+.transcript-performance-table {
+  width: 100%;
+  border-collapse: collapse;
+  text-align: left;
+}
+
+.transcript-performance-table th {
+  background: #dbeafe;
+  color: #1e3a8a;
+  font-weight: 700;
+  font-size: 12px;
+  padding: 12px 16px;
+  border: 1px solid #bfdbfe;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.transcript-performance-table td {
+  padding: 12px 16px;
+  font-size: 13.5px;
+  color: #334155;
+  border: 1px solid #e2e8f0;
+}
+
+.transcript-performance-table td.center-text,
+.transcript-performance-table th.center-text {
+  text-align: center;
+}
+
+.marks-main {
+  font-size: 14px;
+  font-weight: 800;
+  color: #1d4ed8;
+}
+
+.marks-slash {
+  color: #94a3b8;
+  font-size: 11px;
+  font-weight: 500;
+}
+
+/* Status Badges */
+.badge-pass {
+  display: inline-block;
+  background: #dcfce7;
+  color: #166534;
+  padding: 4px 14px;
+  border-radius: 50px;
+  font-size: 12px;
+  font-weight: 700;
+  border: 1px solid #bbf7d0;
+}
+
+.badge-fail {
+  display: inline-block;
+  background: #fee2e2;
+  color: #991b1b;
+  padding: 4px 14px;
+  border-radius: 50px;
+  font-size: 12px;
+  font-weight: 700;
+  border: 1px solid #fecaca;
+}
+
+/* Action Buttons inside Table */
+.action-buttons {
+  display: flex;
+  gap: 6px;
+  justify-content: center;
+}
+
+.btn-edit {
+  padding: 5px 10px;
+  background: #eff6ff;
+  color: #1d4ed8;
+  border: 1px solid #bfdbfe;
+  border-radius: 6px;
+  font-size: 11px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.btn-edit:hover {
+  background: #dbeafe;
+}
+
+.btn-delete {
+  padding: 5px 10px;
+  background: #fef2f2;
+  color: #dc2626;
+  border: 1px solid #fecaca;
+  border-radius: 6px;
+  font-size: 11px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.btn-delete:hover {
+  background: #fee2e2;
+}
+
+/* Grand Total Row */
+.transcript-grand-total-row td {
+  background: #f8fafc;
+  font-weight: 700;
+  color: #0f172a;
+  border-top: 2px solid #cbd5e1;
+  border-bottom: 2px solid #cbd5e1;
+  font-size: 14px;
+}
+
+/* Summary Grid */
+.transcript-summary-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  border: 1px solid #cbd5e1;
+  border-radius: 8px;
+  background: #f8fafc;
+  margin-bottom: 32px;
+  overflow: hidden;
+}
+
+.transcript-summary-cell {
+  padding: 12px;
+  text-align: center;
+  border-right: 1px solid #cbd5e1;
+}
+
+.transcript-summary-cell:last-child {
+  border-right: none;
+}
+
+.transcript-summary-label {
+  font-size: 10px;
+  font-weight: 700;
+  color: #64748b;
+  text-transform: uppercase;
+  margin-bottom: 4px;
+  letter-spacing: 0.5px;
+}
+
+.transcript-summary-value {
+  font-size: 15px;
+  font-weight: 800;
+  color: #0f172a;
+}
+
+/* Footer & Signatures */
+.transcript-footer {
+  display: grid;
+  grid-template-columns: 1fr 120px 1fr;
+  gap: 24px;
+  align-items: end;
+  margin-top: auto;
+}
+
+.transcript-signature-col {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-end;
+}
+
+.transcript-signature-line {
+  width: 100%;
+  border-top: 1.5px solid #475569;
+  margin-bottom: 6px;
+}
+
+.transcript-signature-label {
+  font-size: 11.5px;
+  font-weight: 700;
+  color: #475569;
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+  text-align: center;
+}
+
+.transcript-signature-placeholder {
+  font-family: 'Dancing Script', 'Brush Script MT', 'Great Vibes', cursive;
+  font-size: 24px;
+  color: #1e3a8a;
+  margin-bottom: -2px;
+  height: 40px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  font-weight: 700;
+}
+
+.transcript-qr-col {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+}
+
+.transcript-qr-box {
+  width: 72px;
+  height: 72px;
+  border: 1px solid #cbd5e1;
+  padding: 5px;
+  background: #ffffff;
+  border-radius: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.03);
+}
+
+.qr-svg {
+  display: block;
+}
+
+/* Print-Specific styling rules */
+@media print {
+
+  /* 1. Force-hide default UI chrome */
+  body * {
+    visibility: hidden !important;
+  }
+
+  /* 2. Selectively bring back ALL printable area wrappers and their children */
+  .mark-sheet-print-area-wrapper,
+  .mark-sheet-print-area-wrapper *,
+  .results-tabulation-sheet,
+  .results-tabulation-sheet *,
+  .printable-area,
+  .printable-area *,
+  .print-container,
+  .print-container * {
+    visibility: visible !important;
+  }
+
+  /* 3. Hide non-printable action controls within printable wrappers */
+  .mark-sheet-no-print,
+  .mark-sheet-no-print *,
+  .transcript-no-print,
+  .transcript-no-print * {
+    visibility: hidden !important;
+    display: none !important;
+  }
+
+  /* 4. Position the printable container at the top of the printed page */
+  .mark-sheet-print-area-wrapper,
+  .results-tabulation-sheet,
+  .printable-area,
+  .print-container {
+    position: absolute !important;
+    left: 0 !important;
+    top: 0 !important;
+    width: 100% !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    display: block !important;
+  }
+
+  /* 5. Define A4 dimensions and clean page margins */
+  @page {
+    size: A4;
+    margin: 10mm 15mm 10mm 15mm;
+    /* Top, Right, Bottom, Left */
+  }
+
+  html,
+  body {
+    background: #ffffff !important;
+    color: #000000 !important;
+    height: auto !important;
+    overflow: visible !important;
+  }
+
+  /* 6. Style the card to fit perfectly on a single page */
+  .transcript-container {
+    border: 2px solid #000000 !important;
+    box-shadow: none !important;
+    width: 100% !important;
+    max-width: 100% !important;
+    height: 100% !important;
+    margin: 0 !important;
+    padding: 15px !important;
+    box-sizing: border-box !important;
+    page-break-inside: avoid !important;
+    break-inside: avoid !important;
+    display: flex !important;
+    flex-direction: column !important;
+    justify-content: space-between !important;
+  }
+
+  /* 7. Ensure background colors render in print previews */
+  * {
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+  }
+
+  .transcript-header {
+    margin-bottom: 8mm !important;
+  }
+
+  .transcript-school-name {
+    font-size: 24px !important;
+    color: #000000 !important;
+  }
+
+  .transcript-school-meta {
+    font-size: 11px !important;
+    color: #475569 !important;
+  }
+
+  .transcript-session-capsule {
+    background: #f1f5f9 !important;
+    border: 1px solid #cbd5e1 !important;
+    color: #334155 !important;
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+  }
+
+  .transcript-student-section {
+    margin-bottom: 8mm !important;
+    gap: 12mm !important;
+  }
+
+  .transcript-student-grid {
+    gap: 3mm 8mm !important;
+  }
+
+  .transcript-info-field {
+    border-bottom: 1px dashed #94a3b8 !important;
+  }
+
+  .transcript-info-label {
+    color: #475569 !important;
+  }
+
+  .transcript-info-value {
+    color: #000000 !important;
+  }
+
+  .transcript-photo-box {
+    border: 2px solid #000000 !important;
+    background: #ffffff !important;
+  }
+
+  /* Academic Performance Table */
+  .transcript-table-container {
+    margin-bottom: 8mm !important;
+  }
+
+  .transcript-performance-table th {
+    background: #dbeafe !important;
+    color: #1e3a8a !important;
+    border: 1px solid #94a3b8 !important;
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+  }
+
+  .transcript-performance-table td {
+    padding: 10px 14px !important;
+    font-size: 12.5px !important;
+    border: 1px solid #cbd5e1 !important;
+  }
+
+  .marks-main {
+    color: #1d4ed8 !important;
+  }
+
+  .badge-pass {
+    background: #dcfce7 !important;
+    color: #166534 !important;
+    border: 1px solid #bbf7d0 !important;
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+  }
+
+  .badge-fail {
+    background: #fee2e2 !important;
+    color: #991b1b !important;
+    border: 1px solid #fecaca !important;
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+  }
+
+  .transcript-grand-total-row td {
+    background: #f8fafc !important;
+    border-top: 2px solid #000000 !important;
+    border-bottom: 2px solid #000000 !important;
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+  }
+
+  /* Summary Grid */
+  .transcript-summary-grid {
+    border: 1px solid #000000 !important;
+    background: #f8fafc !important;
+    margin-bottom: 12mm !important;
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+  }
+
+  .transcript-summary-cell {
+    border-right: 1px solid #000000 !important;
+  }
+
+  .transcript-summary-cell:last-child {
+    border-right: none !important;
+  }
+
+  .transcript-summary-value {
+    color: #000000 !important;
+  }
+
+  /* Signatures Footer */
+  .transcript-footer {
+    margin-top: auto !important;
+    gap: 15mm !important;
+  }
+
+  .transcript-signature-line {
+    border-top: 1.5px solid #000000 !important;
+  }
+
+  .transcript-signature-label {
+    color: #000000 !important;
+  }
+
+  .transcript-signature-placeholder {
+    color: #1e3a8a !important;
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+  }
+
+  .transcript-qr-box {
+    border: 1px solid #000000 !important;
+  }
+}
