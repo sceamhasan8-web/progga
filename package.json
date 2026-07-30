@@ -12,7 +12,10 @@
     "dataconnect:deploy": "npx firebase-tools deploy --only dataconnect"
   },
   "dependencies": {
-    "firebase": "^10.14.1",
+    "@capacitor/android": "^8.4.2",
+    "@capacitor/cli": "^8.4.2",
+    "@capacitor/core": "^8.4.2",
+    "firebase": "^12.17.0",
     "git": "^0.1.5",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
@@ -23,11 +26,12 @@
     "autoprefixer": "^10.5.4",
     "postcss": "^8.5.23",
     "tailwindcss": "^3.4.19",
-    "vite": "^5.4.1"
+    "vite": "^8.2.0"
   },
   "allowScripts": {
-    "protobufjs@7.6.4": true,
     "esbuild@0.21.5": true,
-    "vite@5.4.21": true
+    "vite@5.4.21": true,
+    "@firebase/util@1.15.2": true,
+    "protobufjs@7.6.5": true
   }
 }
