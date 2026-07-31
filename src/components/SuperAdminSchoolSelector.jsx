@@ -9,9 +9,10 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { useAuth } from '../context/AuthContext.jsx';
 import { useSchoolProfile } from '../context/SchoolProfileContext.jsx';
 import { useViewMode } from '../context/ViewModeContext.jsx';
-import { getAllRegisteredSchools } from '../utils/schoolData.js';
-import { getRegisteredSchoolsFromFirestore } from '../firebase/firestoreSchema.js';
+import { getAllRegisteredSchools, removeSchoolFromRegistry } from '../utils/schoolData.js';
+import { getRegisteredSchoolsFromFirestore, deleteSchoolPortalFromFirestore } from '../firebase/firestoreSchema.js';
 import SchoolRegistrationWizard from './SchoolRegistrationWizard.jsx';
+import useConfirm from '../hooks/useConfirm.js';
 import '../super-admin.css';
 
 /** Color map for user initials or avatar accents */
@@ -37,16 +38,32 @@ export function useRegisteredSchoolsList() {
     const localSchools = getAllRegisteredSchools();
     setSchools(localSchools);
 
+    let deletedList = [];
+    try {
+      const rawDeleted = window.localStorage.getItem('progga_deleted_schools_registry');
+      if (rawDeleted) deletedList = JSON.parse(rawDeleted).map((s) => String(s).toLowerCase());
+    } catch {}
+
+    const isDeleted = (item) => {
+      if (!item) return false;
+      const id = String(item.schoolId || item.id || item.schoolCode || '').trim().toLowerCase();
+      const eiin = String(item.eiinNumber || item.eiin || '').trim().toLowerCase();
+      const code = String(item.schoolCode || item.code || '').trim().toLowerCase();
+      return (id && deletedList.includes(id)) || (eiin && deletedList.includes(eiin)) || (code && deletedList.includes(code));
+    };
+
     try {
       const remoteSchools = await getRegisteredSchoolsFromFirestore();
       if (Array.isArray(remoteSchools) && remoteSchools.length > 0) {
         const mergedMap = new Map();
         localSchools.forEach((s) => {
+          if (isDeleted(s)) return;
           const key = String(s.schoolId || s.schoolCode || s.eiinNumber || '').toLowerCase();
           if (key) mergedMap.set(key, s);
         });
 
         remoteSchools.forEach((r) => {
+          if (isDeleted(r)) return;
           const key = String(r.schoolId || r.schoolCode || r.eiinNumber || r.id || '').toLowerCase();
           if (key) {
             const existing = mergedMap.get(key) || {};
@@ -80,14 +97,15 @@ export function useRegisteredSchoolsList() {
     };
   }, [refresh]);
 
-  return { schools, refresh };
+  return { schools, setSchools, refresh };
 }
 
 export default function SuperAdminSchoolSelector({ onSelectBranch }) {
   const { user, signOut } = useAuth();
   const { schoolProfile, switchSchool } = useSchoolProfile();
   const { setViewMode } = useViewMode();
-  const { schools: schoolsList, refresh } = useRegisteredSchoolsList();
+  const { schools: schoolsList, setSchools: setSchoolsList, refresh } = useRegisteredSchoolsList();
+  const confirm = useConfirm();
 
   const [searchQuery, setSearchQuery] = useState('');
   const [isWizardOpen, setIsWizardOpen] = useState(false);
@@ -115,6 +133,56 @@ export default function SuperAdminSchoolSelector({ onSelectBranch }) {
         onSelectBranch(targetSchool);
       }
     }, 0);
+  };
+
+  // Handle explicit school deletion with double-confirmation modal
+  const handleDeleteSchool = async (e, targetSchool) => {
+    if (e) e.stopPropagation();
+    if (!targetSchool) return;
+
+    const targetId = targetSchool.schoolId || targetSchool.schoolCode || targetSchool.id;
+    const targetName = targetSchool.schoolName || 'School Branch';
+    const targetEiin = targetSchool.eiinNumber || '';
+    const isMasterDefault = targetSchool.isDefault || targetId === 'SCHOLASTICBASE_DEFAULT' || targetId === 'PROGGA_DEFAULT';
+
+    if (isMasterDefault) {
+      setToastMessage('Default master school branch cannot be deleted.');
+      return;
+    }
+
+    const isConfirmed = await confirm({
+      title: 'Delete School Branch',
+      message: `Are you sure you want to delete "${targetName}" (EIIN: ${targetEiin || 'N/A'})? This will permanently remove this school branch from your School Branch Directory.`,
+      confirmText: 'OK, Delete School',
+      cancelText: 'Cancel',
+    });
+
+    if (isConfirmed) {
+      // 1. Instant optimistic UI removal frame
+      setSchoolsList((prev) => prev.filter((s) => {
+        const sId = String(s.schoolId || s.schoolCode || s.id || '').trim().toLowerCase();
+        const sEiin = String(s.eiinNumber || '').trim().toLowerCase();
+        const sName = String(s.schoolName || s.name || '').trim().toLowerCase();
+
+        const tId = String(targetId).trim().toLowerCase();
+        const tEiin = String(targetEiin).trim().toLowerCase();
+        const tName = String(targetName).trim().toLowerCase();
+
+        if (tId && sId === tId) return false;
+        if (tEiin && sEiin === tEiin) return false;
+        if (tName && sName === tName) return false;
+        return true;
+      }));
+
+      // 2. Local storage & blacklist purge
+      removeSchoolFromRegistry(targetSchool);
+
+      // 3. Firestore deletion with guaranteed Auth token
+      deleteSchoolPortalFromFirestore(targetId).catch(() => {});
+
+      // 4. Feedback toast
+      setToastMessage(`School branch "${targetName}" deleted successfully.`);
+    }
   };
 
   // Filter schools list
@@ -215,6 +283,7 @@ export default function SuperAdminSchoolSelector({ onSelectBranch }) {
             const isActive = String(schId).toLowerCase() === String(activeSchoolId).toLowerCase() ||
               (schEiin !== 'N/A' && String(schEiin) === String(activeEiin));
             const accentColor = ACCENT_COLORS[idx % ACCENT_COLORS.length];
+            const isDefaultMaster = sch.isDefault || schId === 'SCHOLASTICBASE_DEFAULT' || schId === 'PROGGA_DEFAULT';
 
             return (
               <div
@@ -281,9 +350,11 @@ export default function SuperAdminSchoolSelector({ onSelectBranch }) {
                   </div>
                 </div>
 
-                <div className="sa-card-footer">
+                <div className="sa-card-footer" style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
                   <button
+                    type="button"
                     className={`sa-card-switch-btn ${isActive ? 'sa-btn-active-disabled' : 'sa-btn-switch-now'}`}
+                    style={{ flex: 1 }}
                     onClick={(e) => {
                       e.stopPropagation();
                       handleSelectSchool(sch);
@@ -291,6 +362,31 @@ export default function SuperAdminSchoolSelector({ onSelectBranch }) {
                   >
                     {isActive ? '✓ ENTER ACTIVE SCHOOL PANEL' : '🚀 LOGIN TO THIS SCHOOL BRANCH'}
                   </button>
+                  {!isDefaultMaster && (
+                    <button
+                      type="button"
+                      className="sa-card-delete-btn"
+                      title={`Delete ${sch.schoolName}`}
+                      onClick={(e) => handleDeleteSchool(e, sch)}
+                      style={{
+                        padding: '10px 14px',
+                        borderRadius: '8px',
+                        border: '1px solid #fecaca',
+                        background: '#fef2f2',
+                        color: '#dc2626',
+                        fontWeight: '700',
+                        fontSize: '13px',
+                        cursor: 'pointer',
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        gap: '6px',
+                        transition: 'all 0.2s ease',
+                        flexShrink: 0,
+                      }}
+                    >
+                      🗑️ Delete
+                    </button>
+                  )}
                 </div>
               </div>
             );

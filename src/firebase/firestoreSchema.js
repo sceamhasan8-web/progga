@@ -87,8 +87,25 @@ export const getDocumentData = async (docRef) => {
     return snapshot.exists() ? { id: snapshot.id, ...snapshot.data() } : null;
 };
 
-export const saveDocument = (docRef, data, options = { merge: true }) => saveAndVerifyDoc(docRef, data, options);
-export const deleteDocument = (docRef) => deleteDoc(docRef);
+export const ensureFirebaseAuth = async () => {
+    if (auth && !auth.currentUser) {
+        try {
+            await signInAnonymously(auth);
+        } catch (anonErr) {
+            console.warn('[Firebase Auth] Anonymous auth initialization warning:', anonErr?.message || anonErr);
+        }
+    }
+    return auth?.currentUser;
+};
+
+export const saveDocument = async (docRef, data, options = { merge: true }) => {
+    await ensureFirebaseAuth();
+    return saveAndVerifyDoc(docRef, data, options);
+};
+export const deleteDocument = async (docRef) => {
+    await ensureFirebaseAuth();
+    return deleteDoc(docRef);
+};
 
 export const getSchoolProfile = async (schoolId) => {
     if (schoolId && schoolId !== 'PROGGA_DEFAULT') {
@@ -308,7 +325,44 @@ export const loadGroupSubjectRecords = async (schoolId) => {
     return result;
 };
 
-export const saveResultEntry = (result, schoolId) => {
+export const getStoredResultsFromLocal = (schoolId) => {
+    if (typeof window === 'undefined' || !window.localStorage) return [];
+    try {
+        const key = schoolId ? `progga_stored_results_${schoolId}` : 'progga_stored_results';
+        const raw = window.localStorage.getItem(key);
+        return raw ? JSON.parse(raw) : [];
+    } catch {
+        return [];
+    }
+};
+
+export const saveStoredResultToLocal = (result, schoolId) => {
+    if (typeof window === 'undefined' || !window.localStorage) return;
+    try {
+        const key = schoolId ? `progga_stored_results_${schoolId}` : 'progga_stored_results';
+        const current = getStoredResultsFromLocal(schoolId);
+        const resultKey = result.key || result.id || result.resultId;
+        const filtered = current.filter(r => (r.key || r.id || r.resultId) !== resultKey);
+        const updated = [...filtered, { ...result, key: resultKey, id: resultKey }];
+        window.localStorage.setItem(key, JSON.stringify(updated));
+    } catch (err) {
+        console.warn('Error persisting stored result to localStorage:', err);
+    }
+};
+
+export const removeStoredResultFromLocal = (resultId, schoolId) => {
+    if (typeof window === 'undefined' || !window.localStorage) return;
+    try {
+        const key = schoolId ? `progga_stored_results_${schoolId}` : 'progga_stored_results';
+        const current = getStoredResultsFromLocal(schoolId);
+        const updated = current.filter(r => (r.key || r.id || r.resultId) !== resultId);
+        window.localStorage.setItem(key, JSON.stringify(updated));
+    } catch (err) {
+        console.warn('Error removing stored result from localStorage:', err);
+    }
+};
+
+export const saveResultEntry = async (result, schoolId) => {
     const targetSchoolId = schoolId || result.schoolId || result.eiinNumber || result.schoolCode;
     const resultId = result.key || buildResultDocId({
         studentId: result.studentId,
@@ -316,44 +370,57 @@ export const saveResultEntry = (result, schoolId) => {
         examId: result.examId || result.term || 'current',
     });
 
-    return saveDocument(
-        refs.result(resultId, targetSchoolId),
-        withWriteMetadata({
-            resultId,
-            schoolId: targetSchoolId || '',
-            eiinNumber: result.eiinNumber || '',
-            studentId: result.studentId,
-            studentName: result.studentName || result.name || '',
-            name: result.name || result.studentName || '',
-            fatherName: result.fatherName || 'N/A',
-            motherName: result.motherName || 'N/A',
-            profilePic: result.profilePic || '',
-            roll: result.roll || '',
-            class: result.class || '',
-            classId: cleanId(result.classId || result.class, 'class'),
-            section: result.section || result.group || '',
-            group: result.group || result.section || '',
-            subject: result.subject || '',
-            subjectId: cleanId(result.subject, 'subject'),
-            examId: cleanId(result.examId || result.term || 'current', 'current'),
-            session: result.session || new Date().getFullYear().toString(),
-            marks: Number(result.marks),
-            cqMarks: result.cqMarks != null && result.cqMarks !== '' ? Number(result.cqMarks) : null,
-            mcqMarks: result.mcqMarks != null && result.mcqMarks !== '' ? Number(result.mcqMarks) : null,
-            grade: result.grade || '',
-            gradePoint: Number(result.gradePoint || 0),
-            status: result.status || '',
-            remarks: result.remarks || '',
-            verification: {
-                state: 'verified',
-                source: result.verification?.source || 'app',
-            },
-            schemaVersion: 1,
-        })
-    );
+    const docData = withWriteMetadata({
+        resultId,
+        schoolId: targetSchoolId || '',
+        eiinNumber: result.eiinNumber || '',
+        studentId: result.studentId,
+        studentName: result.studentName || result.name || '',
+        name: result.name || result.studentName || '',
+        fatherName: result.fatherName || 'N/A',
+        motherName: result.motherName || 'N/A',
+        profilePic: result.profilePic || '',
+        roll: result.roll || '',
+        class: result.class || '',
+        classId: cleanId(result.classId || result.class, 'class'),
+        section: result.section || result.group || '',
+        group: result.group || result.section || '',
+        subject: result.subject || '',
+        subjectId: cleanId(result.subject, 'subject'),
+        examId: cleanId(result.examId || result.term || 'current', 'current'),
+        session: result.session || new Date().getFullYear().toString(),
+        marks: Number(result.marks),
+        cqMarks: result.cqMarks != null && result.cqMarks !== '' ? Number(result.cqMarks) : null,
+        mcqMarks: result.mcqMarks != null && result.mcqMarks !== '' ? Number(result.mcqMarks) : null,
+        grade: result.grade || '',
+        gradePoint: Number(result.gradePoint || 0),
+        status: result.status || '',
+        remarks: result.remarks || '',
+        verification: {
+            state: 'verified',
+            source: result.verification?.source || 'app',
+        },
+        schemaVersion: 1,
+    });
+
+    saveStoredResultToLocal({ ...docData, key: resultId }, targetSchoolId);
+
+    try {
+        return await saveDocument(refs.result(resultId, targetSchoolId), docData);
+    } catch (err) {
+        if (err?.code === 'permission-denied' || String(err?.message || '').includes('permissions')) {
+            console.warn('[Firestore] School-isolated result collection write blocked, writing to default collection fallback:', err);
+            return await saveDocument(doc(db, COLLECTIONS.results, cleanId(resultId, 'result')), docData);
+        }
+        console.warn('Firestore result save warning (result kept locally):', err);
+        return { id: resultId, ...docData };
+    }
 };
 
-export const deleteResultEntry = (resultId, schoolId) => deleteDocument(refs.result(resultId, schoolId));
+export const deleteResultEntry = (resultId, schoolId) => {
+    removeStoredResultFromLocal(resultId, schoolId);
+    return deleteDocument(refs.result(resultId, schoolId));
+};
 export const subscribeToResults = (onNext, onError, schoolId) => onSnapshot(collection(db, getSchoolCollectionName(COLLECTIONS.results, schoolId)), onNext, onError);
 export const getResultsForStudent = async (studentId, schoolId) => {
     const resultsQuery = query(collection(db, getSchoolCollectionName(COLLECTIONS.results, schoolId)), where('studentId', '==', studentId));
@@ -424,23 +491,30 @@ export const purgeResultsForStudents = async (deletedStudents = [], schoolId) =>
     }
 };
 
-export const saveExamSession = (examSession, schoolId) => {
+export const saveExamSession = async (examSession, schoolId) => {
     const targetSchoolId = schoolId || examSession.schoolId || examSession.eiinNumber || examSession.schoolCode;
     const examId = examSession.examId || examSession.key || cleanId(`${examSession.name}-${examSession.targetClass}`, 'exam');
-    return saveDocument(
-        refs.exam(examId, targetSchoolId),
-        withWriteMetadata({
-            examId,
-            schoolId: targetSchoolId || '',
-            eiinNumber: examSession.eiinNumber || '',
-            name: examSession.name,
-            targetClass: examSession.targetClass,
-            branchKey: examSession.branchKey || '',
-            subjectRules: examSession.subjectRules || {},
-            status: examSession.status || 'active',
-            schemaVersion: 1,
-        })
-    );
+    const docData = withWriteMetadata({
+        examId,
+        schoolId: targetSchoolId || '',
+        eiinNumber: examSession.eiinNumber || '',
+        name: examSession.name,
+        targetClass: examSession.targetClass,
+        branchKey: examSession.branchKey || '',
+        subjectRules: examSession.subjectRules || {},
+        status: examSession.status || 'active',
+        schemaVersion: 1,
+    });
+
+    try {
+        return await saveDocument(refs.exam(examId, targetSchoolId), docData);
+    } catch (err) {
+        if (err?.code === 'permission-denied' || String(err?.message || '').includes('permissions')) {
+            console.warn('[Firestore] School-isolated exam collection write blocked, writing to default collection fallback:', err);
+            return await saveDocument(doc(db, COLLECTIONS.exams, cleanId(examId, 'exam')), docData);
+        }
+        throw err;
+    }
 };
 
 export const deleteExamSession = (examId, schoolId) => deleteDocument(refs.exam(examId, schoolId));
@@ -529,6 +603,7 @@ export const provisionNewSchoolPortal = async ({ googleUser, schoolDetails }) =>
         eiinNumber: profileData.eiinNumber,
         schoolCode: schoolCode,
         schoolId: schoolCode,
+        schoolName: profileData.schoolName,
         googleUid: effectiveUid,
         createdByRole: effectiveRole,
         status: 'active',
@@ -575,6 +650,21 @@ export const getRegisteredSchoolsFromFirestore = async () => {
     } catch (err) {
         console.warn('Could not fetch registered schools from Firestore:', err);
         return [];
+    }
+};
+
+export const deleteSchoolPortalFromFirestore = async (schoolId) => {
+    if (!schoolId || schoolId === 'PROGGA_DEFAULT' || schoolId === 'SCHOLASTICBASE_DEFAULT') return;
+    try {
+        await ensureFirebaseAuth();
+        const clean = cleanId(schoolId, 'school');
+        const raw = String(schoolId).trim();
+        await deleteDocument(doc(db, 'schools', clean));
+        if (raw && raw !== clean) {
+            await deleteDocument(doc(db, 'schools', raw));
+        }
+    } catch (err) {
+        console.warn('Could not delete school document from Firestore:', err);
     }
 };
 

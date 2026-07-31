@@ -141,12 +141,20 @@ export default function SchoolRegistrationWizard({ googleUser: propGoogleUser, i
         },
       });
 
+      const schoolProfileToSave = {
+        ...provisioned.schoolProfile,
+        schoolName: formData.schoolName.trim(),
+      };
+
       // 2. Sync React Context and localStorage for active school profile
-      provisionSchoolProfile(provisioned.schoolProfile);
-      registerSchoolInRegistry(provisioned.schoolProfile);
+      provisionSchoolProfile(schoolProfileToSave);
+      registerSchoolInRegistry(schoolProfileToSave);
 
       // 3. Establish active Admin user session in AuthContext & localStorage
-      provisionSchoolAdminSession(provisioned.adminAccount);
+      provisionSchoolAdminSession({
+        ...provisioned.adminAccount,
+        schoolName: formData.schoolName.trim(),
+      });
 
       // 4. Initialize clean isolated local storage structures for the new school
       try {

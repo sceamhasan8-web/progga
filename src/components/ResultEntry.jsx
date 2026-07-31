@@ -1,19 +1,66 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { buildResultDocId, saveResultEntry, subscribeToExams } from '../firebase/firestoreSchema.js';
 import { getDynamicGradeInfoWithComponents, resolveRuleTotals } from '../utils/bangladeshGrading.js';
-import { getSchoolNameByClass, getBranchKeyByClass, SCHOOL_BRANCHES, filterClassesByBranch, sortClasses } from '../utils/schoolResolver.js';
+import { getSchoolNameByClass, getBranchKeyByClass, SCHOOL_BRANCHES, filterClassesByBranch, sortClasses, getClassSortIndex } from '../utils/schoolResolver.js';
 import useTranslation from '../hooks/useTranslation.js';
 import useConfirm from '../hooks/useConfirm.js';
+import { useSchoolProfile } from '../context/SchoolProfileContext.jsx';
+import { useAuth } from '../context/AuthContext.jsx';
+import { useViewMode } from '../context/ViewModeContext.jsx';
 
 const BRANCH_ORDER = ['primary', 'secondary', 'college'];
 
 const fallbackSubjects = ['Mathematics', 'Physics', 'English', 'Science', 'History', 'Geography', 'Computer Science'];
+
+const getStoredExamSessions = (schoolId) => {
+  if (typeof window === 'undefined' || !window.localStorage) return [];
+  try {
+    const key = schoolId ? `progga_exam_sessions_${schoolId}` : 'progga_exam_sessions';
+    const raw = window.localStorage.getItem(key);
+    return raw ? JSON.parse(raw) : [];
+  } catch {
+    return [];
+  }
+};
+
+const saveStoredExamSessions = (sessions, schoolId) => {
+  if (typeof window === 'undefined' || !window.localStorage) return;
+  try {
+    const key = schoolId ? `progga_exam_sessions_${schoolId}` : 'progga_exam_sessions';
+    const jsonStr = JSON.stringify(sessions);
+    window.localStorage.setItem(key, jsonStr);
+  } catch (err) {
+    console.warn('Error writing exam sessions to localStorage:', err);
+  }
+};
 
 const ResultEntry = ({ classes = [], currentTeacherProfile = null, currentTeacherAssignments = [], readOnly = false }) => {
   const safeClasses = Array.isArray(classes) ? classes : [];
   const classOptions = useMemo(() => sortClasses(safeClasses.filter((cls) => cls?.className)), [safeClasses]);
   const confirm = useConfirm();
   const { t } = useTranslation();
+
+  const schoolProfileCtx = useSchoolProfile() || {};
+  const schoolProfile = schoolProfileCtx.schoolProfile || schoolProfileCtx.defaultSchoolProfile || {};
+  const authCtx = useAuth() || {};
+  const user = authCtx.user || null;
+  const viewModeCtx = useViewMode() || {};
+  const effectiveUser = viewModeCtx.effectiveUser || user;
+
+  const activeSchoolId = schoolProfile?.schoolId
+    || schoolProfile?.schoolCode
+    || schoolProfile?.eiinNumber
+    || effectiveUser?.schoolId
+    || effectiveUser?.schoolCode
+    || effectiveUser?.eiinNumber
+    || user?.schoolId
+    || user?.schoolCode
+    || user?.eiinNumber
+    || (Array.isArray(classes) && classes.find((c) => c?.schoolId)?.schoolId)
+    || (typeof window !== 'undefined' && window.localStorage
+        ? (window.localStorage.getItem('schoolId') || window.localStorage.getItem('schoolCode') || window.localStorage.getItem('schoolEiinNumber'))
+        : '')
+    || '';
 
   // Determine initial branch: pick the first branch that has at least one class in classOptions
   const defaultBranch = useMemo(() => {
@@ -29,30 +76,53 @@ const ResultEntry = ({ classes = [], currentTeacherProfile = null, currentTeache
   const [selectedSubject, setSelectedSubject] = useState(fallbackSubjects[0]);
   const [students, setStudents] = useState([]);
   const [feedback, setFeedback] = useState('');
-  const [examSessions, setExamSessions] = useState([]);
+  const [examSessions, setExamSessions] = useState(() => getStoredExamSessions(activeSchoolId));
   const [selectedExamId, setSelectedExamId] = useState('');
 
-  // Subscribe to Exam Sessions
+  // Subscribe to Exam Sessions with activeSchoolId
   useEffect(() => {
     const unsubscribe = subscribeToExams(
       (snapshot) => {
-        setExamSessions(snapshot.docs.map((item) => ({ key: item.id, ...item.data() })));
+        if (!snapshot || !snapshot.docs) return;
+        const firestoreDocs = snapshot.docs.map((item) => ({ key: item.id, examId: item.data().examId || item.id, ...item.data() }));
+        const localDocs = getStoredExamSessions(activeSchoolId);
+        const map = new Map();
+        [...localDocs, ...firestoreDocs].forEach((item) => {
+          const id = item?.examId || item?.id || item?.key;
+          if (id) map.set(id, { ...map.get(id), ...item });
+        });
+        const merged = Array.from(map.values());
+        setExamSessions(merged);
+        saveStoredExamSessions(merged, activeSchoolId);
       },
       (err) => {
         console.warn('Could not subscribe to exam sessions in ResultEntry:', err);
-      }
+      },
+      activeSchoolId
     );
-    return unsubscribe;
-  }, []);
+    return () => {
+      if (typeof unsubscribe === 'function') unsubscribe();
+    };
+  }, [activeSchoolId]);
 
   const filteredExamSessions = useMemo(() => {
-    return examSessions.filter((exam) => exam.targetClass === selectedClass);
+    if (!selectedClass) return examSessions;
+    const targetNorm = String(selectedClass || '').trim().toLowerCase();
+    const targetSortIdx = getClassSortIndex(selectedClass);
+    return examSessions.filter((exam) => {
+      if (!exam.targetClass) return true;
+      const examNorm = String(exam.targetClass || '').trim().toLowerCase();
+      if (examNorm === targetNorm) return true;
+      const examSortIdx = getClassSortIndex(exam.targetClass);
+      if (examSortIdx !== 99999 && targetSortIdx !== 99999 && examSortIdx === targetSortIdx) return true;
+      return false;
+    });
   }, [examSessions, selectedClass]);
 
   useEffect(() => {
     if (filteredExamSessions.length > 0) {
-      if (!filteredExamSessions.some((exam) => exam.examId === selectedExamId)) {
-        setSelectedExamId(filteredExamSessions[0].examId);
+      if (!filteredExamSessions.some((exam) => (exam.examId || exam.key || exam.id) === selectedExamId)) {
+        setSelectedExamId(filteredExamSessions[0].examId || filteredExamSessions[0].key || filteredExamSessions[0].id);
       }
     } else {
       setSelectedExamId('');
@@ -60,7 +130,7 @@ const ResultEntry = ({ classes = [], currentTeacherProfile = null, currentTeache
   }, [filteredExamSessions, selectedExamId]);
 
   const selectedExam = useMemo(() => {
-    return filteredExamSessions.find((exam) => exam.examId === selectedExamId) || null;
+    return filteredExamSessions.find((exam) => (exam.examId || exam.key || exam.id) === selectedExamId) || null;
   }, [filteredExamSessions, selectedExamId]);
 
   const currentSubjectRule = useMemo(() => {
@@ -173,6 +243,8 @@ const ResultEntry = ({ classes = [], currentTeacherProfile = null, currentTeache
     () => branchFilteredClassOptions.find((cls) => cls.className === selectedClass) || branchFilteredClassOptions[0] || null,
     [branchFilteredClassOptions, selectedClass]
   );
+
+  const isPrimaryBranch = selectedBranch === 'primary' || getBranchKeyByClass(selectedClass) === 'primary';
 
   // Declared here (after selectedClassData) to avoid Temporal Dead Zone crash
   const effectiveReadOnly = useMemo(() => {
@@ -452,8 +524,9 @@ const ResultEntry = ({ classes = [], currentTeacherProfile = null, currentTeache
           status: gradeInfo.status,
           remarks: gradeInfo.remarks,
           examId: selectedExamId,
+          schoolId: activeSchoolId,
           key: resultId,
-        });
+        }, activeSchoolId);
       }));
 
       setFeedback(`Marks saved and verified in Firebase for ${filledStudents.length} student${filledStudents.length > 1 ? 's' : ''}.`);
@@ -591,11 +664,14 @@ const ResultEntry = ({ classes = [], currentTeacherProfile = null, currentTeache
               {filteredExamSessions.length === 0 ? (
                 <option value="">{t('results.noExamConfigured')}</option>
               ) : (
-                filteredExamSessions.map((exam) => (
-                  <option key={exam.examId} value={exam.examId}>
-                    {exam.name}
-                  </option>
-                ))
+                filteredExamSessions.map((exam) => {
+                  const idVal = exam.examId || exam.key || exam.id;
+                  return (
+                    <option key={idVal} value={idVal}>
+                      {exam.name}
+                    </option>
+                  );
+                })
               )}
             </select>
           </label>
@@ -632,7 +708,7 @@ const ResultEntry = ({ classes = [], currentTeacherProfile = null, currentTeache
           {hasCqMcqRule ? (
             <>
               <span><strong>CQ:</strong> {currentSubjectRule.cqTotal} (Pass: {currentSubjectRule.cqPass})</span>
-              {hasMcqComponent && <span><strong>MCQ:</strong> {currentSubjectRule.mcqTotal} (Pass: {currentSubjectRule.mcqPass})</span>}
+              {hasMcqComponent && <span><strong>{isPrimaryBranch ? 'Tutorial:' : 'MCQ:'}</strong> {currentSubjectRule.mcqTotal} (Pass: {currentSubjectRule.mcqPass})</span>}
               <span><strong>Combined:</strong> {resolvedRule.totalMarks}</span>
             </>
           ) : (
@@ -655,7 +731,7 @@ const ResultEntry = ({ classes = [], currentTeacherProfile = null, currentTeache
                   {hasCqMcqRule ? (
                     <>
                       <th style={{ ...styles.th, textAlign: 'center' }}>CQ<br/><span style={{ fontWeight: 500, fontSize: 11 }}>(Max: {currentSubjectRule.cqTotal})</span></th>
-                      {hasMcqComponent && <th style={{ ...styles.th, textAlign: 'center' }}>MCQ<br/><span style={{ fontWeight: 500, fontSize: 11 }}>(Max: {currentSubjectRule.mcqTotal})</span></th>}
+                      {hasMcqComponent && <th style={{ ...styles.th, textAlign: 'center' }}>{isPrimaryBranch ? 'Tutorial' : 'MCQ'}<br/><span style={{ fontWeight: 500, fontSize: 11 }}>(Max: {currentSubjectRule.mcqTotal})</span></th>}
                       <th style={{ ...styles.th, textAlign: 'center' }}>Total<br/><span style={{ fontWeight: 500, fontSize: 11 }}>(Max: {resolvedRule.totalMarks})</span></th>
                     </>
                   ) : (
@@ -706,7 +782,7 @@ const ResultEntry = ({ classes = [], currentTeacherProfile = null, currentTeache
                               max={currentSubjectRule.cqTotal}
                             />
                           </td>
-                          {/* MCQ input */}
+                          {/* MCQ / Tutorial input */}
                           {hasMcqComponent && (
                             <td style={{ ...styles.td, textAlign: 'center' }}>
                               <input
@@ -738,7 +814,7 @@ const ResultEntry = ({ classes = [], currentTeacherProfile = null, currentTeache
                             </span>
                             {(cqFail || mcqFail) && (
                               <div style={{ fontSize: 10, color: '#b91c1c', fontWeight: 700, marginTop: 2 }}>
-                                {cqFail && mcqFail ? 'CQ+MCQ Fail' : cqFail ? 'CQ Fail' : 'MCQ Fail'}
+                                {cqFail && mcqFail ? (isPrimaryBranch ? 'CQ+Tutorial Fail' : 'CQ+MCQ Fail') : cqFail ? 'CQ Fail' : (isPrimaryBranch ? 'Tutorial Fail' : 'MCQ Fail')}
                               </div>
                             )}
                           </td>

@@ -60,8 +60,33 @@ export function getAllRegisteredSchools() {
   if (registeredSchoolsCache !== null) return registeredSchoolsCache;
   const map = new Map();
 
+  let deletedList = [];
+  try {
+    const rawDeleted = window.localStorage.getItem('progga_deleted_schools_registry');
+    if (rawDeleted) deletedList = JSON.parse(rawDeleted).map((s) => String(s).toLowerCase());
+  } catch {}
+
+  const isDeleted = (raw) => {
+    if (!raw || typeof raw !== 'object') return false;
+    const id = String(raw.schoolId || raw.id || raw.schoolCode || '').trim().toLowerCase();
+    const eiin = String(raw.eiinNumber || raw.eiin || '').trim().toLowerCase();
+    const code = String(raw.schoolCode || raw.code || '').trim().toLowerCase();
+    return (id && deletedList.includes(id)) || (eiin && deletedList.includes(eiin)) || (code && deletedList.includes(code));
+  };
+
+  const isGenericName = (n, idStr, eiinStr) => {
+    if (!n || typeof n !== 'string') return true;
+    const clean = n.trim().toLowerCase();
+    if (!clean) return true;
+    if (idStr && (clean === String(idStr).trim().toLowerCase() || clean === `${String(idStr).trim().toLowerCase()} school`)) return true;
+    if (eiinStr && (clean === String(eiinStr).trim().toLowerCase() || clean === `${String(eiinStr).trim().toLowerCase()} school`)) return true;
+    if (clean === 'unnamed school' || clean === 'registered school portal' || clean === 'new school portal' || clean === 'school portal') return true;
+    return false;
+  };
+
   const addSchool = (raw) => {
     if (!raw || typeof raw !== 'object') return;
+    if (isDeleted(raw)) return;
     const name = String(raw.schoolName || raw.name || '').trim();
     const eiin = String(raw.eiinNumber || raw.eiin || '').trim();
     const id = String(raw.schoolId || raw.id || raw.schoolCode || eiin || '').trim();
@@ -82,12 +107,19 @@ export function getAllRegisteredSchools() {
     const key = existingKey || (id || eiin || name).toLowerCase();
     const existing = map.get(key) || {};
 
+    const resolvedName =
+      (!isGenericName(name, id, eiin) ? name : null) ||
+      (!isGenericName(existing.schoolName, id || existing.schoolId, eiin || existing.eiinNumber) ? existing.schoolName : null) ||
+      name ||
+      existing.schoolName ||
+      'Unnamed School';
+
     map.set(key, {
       ...existing,
       ...raw,
       schoolId: id || existing.schoolId || 'SCHOLASTICBASE_DEFAULT',
       schoolCode: raw.schoolCode || id || existing.schoolCode || 'SCHOLASTICBASE',
-      schoolName: name || existing.schoolName || 'Unnamed School',
+      schoolName: resolvedName,
       eiinNumber: eiin || existing.eiinNumber || 'N/A',
       adminName: raw.adminName || existing.adminName || 'School Admin',
       adminEmail: raw.adminEmail || existing.adminEmail || '',
@@ -160,7 +192,7 @@ export function getAllRegisteredSchools() {
           addSchool({
             schoolId: u.schoolCode || u.eiinNumber,
             schoolCode: u.schoolCode || u.eiinNumber,
-            schoolName: u.schoolName || `${u.schoolCode || u.eiinNumber} School`,
+            schoolName: u.schoolName || '',
             eiinNumber: u.eiinNumber || '',
             adminName: u.role === 'admin' ? u.name : '',
             adminEmail: u.email || '',
@@ -236,6 +268,142 @@ export function registerSchoolInRegistry(schoolProfile) {
   return nextList;
 }
 
+/**
+ * Remove/Unregister a school entry from the global registered schools list and localStorage.
+ * Master default school is protected from deletion.
+ */
+export function removeSchoolFromRegistry(targetSchool) {
+  if (!targetSchool || typeof window === 'undefined') return [];
+
+  const isObj = typeof targetSchool === 'object' && targetSchool !== null;
+  const rawId = isObj ? (targetSchool.schoolId || targetSchool.id || targetSchool.schoolCode) : targetSchool;
+  const rawCode = isObj ? targetSchool.schoolCode : '';
+  const rawEiin = isObj ? targetSchool.eiinNumber : '';
+  const rawName = isObj ? (targetSchool.schoolName || targetSchool.name) : '';
+
+  const cleanId = String(rawId || '').trim().toLowerCase();
+  const cleanCode = String(rawCode || '').trim().toLowerCase();
+  const cleanEiin = String(rawEiin || '').trim().toLowerCase();
+  const cleanName = String(rawName || '').trim().toLowerCase();
+
+  // Protect default master school from accidental deletion
+  if (
+    cleanId === 'scholasticbase_default' || cleanId === 'progga_default' ||
+    cleanCode === 'scholasticbase' || cleanCode === 'progga'
+  ) {
+    console.warn('[Registry] Master default school cannot be deleted.');
+    return getAllRegisteredSchools();
+  }
+
+  const keysToBlacklist = [cleanId, cleanCode, cleanEiin, cleanName].filter(Boolean);
+
+  // 1. Maintain a deleted schools blacklist in localStorage so stale items don't resurrect
+  try {
+    const rawDeleted = window.localStorage.getItem('progga_deleted_schools_registry');
+    const deletedList = rawDeleted ? JSON.parse(rawDeleted) : [];
+    let updated = false;
+    keysToBlacklist.forEach((k) => {
+      if (!deletedList.includes(k)) {
+        deletedList.push(k);
+        updated = true;
+      }
+    });
+    if (updated) {
+      window.localStorage.setItem('progga_deleted_schools_registry', JSON.stringify(deletedList));
+    }
+  } catch {}
+
+  // 2. Filter out school from registered list keys
+  const currentSchools = getAllRegisteredSchools();
+  const filtered = currentSchools.filter((s) => {
+    const sId = String(s.schoolId || s.id || '').trim().toLowerCase();
+    const sCode = String(s.schoolCode || '').trim().toLowerCase();
+    const sEiin = String(s.eiinNumber || s.eiin || '').trim().toLowerCase();
+    const sName = String(s.schoolName || s.name || '').trim().toLowerCase();
+
+    const matches = keysToBlacklist.some((k) => k && (sId === k || sCode === k || sEiin === k || sName === k));
+    return !matches;
+  });
+
+  const jsonStr = JSON.stringify(filtered);
+
+  try {
+    window.localStorage.setItem('registeredSchoolsList', jsonStr);
+    window.localStorage.setItem('schoolAppRegisteredSchools', jsonStr);
+    window.localStorage.setItem('registered_schools', jsonStr);
+  } catch (err) {
+    console.warn('Could not update global registered schools list after deletion:', err);
+  }
+
+  // 3. Remove user accounts bound to this school from schoolAppLocalUsers
+  try {
+    const rawUsers = window.localStorage.getItem(LOCAL_STORAGE_KEYS.USERS);
+    if (rawUsers) {
+      const users = JSON.parse(rawUsers) || {};
+      const updatedUsers = {};
+      Object.entries(users).forEach(([k, u]) => {
+        const uId = String(u.schoolId || u.id || '').trim().toLowerCase();
+        const uCode = String(u.schoolCode || '').trim().toLowerCase();
+        const uEiin = String(u.eiinNumber || u.eiin || '').trim().toLowerCase();
+        const uName = String(u.schoolName || u.name || '').trim().toLowerCase();
+
+        const matches = keysToBlacklist.some((b) => b && (uId === b || uCode === b || uEiin === b || uName === b));
+        if (!matches) {
+          updatedUsers[k] = u;
+        }
+      });
+      window.localStorage.setItem(LOCAL_STORAGE_KEYS.USERS, JSON.stringify(updatedUsers));
+    }
+  } catch {}
+
+  // 4. Reset active schoolAppProfile if active school was deleted
+  try {
+    const activeProfileRaw = window.localStorage.getItem('schoolAppProfile');
+    if (activeProfileRaw) {
+      const parsed = JSON.parse(activeProfileRaw);
+      const activeId = String(parsed?.schoolId || parsed?.schoolCode || '').trim().toLowerCase();
+      const activeEiin = String(parsed?.eiinNumber || '').trim().toLowerCase();
+      const activeName = String(parsed?.schoolName || '').trim().toLowerCase();
+
+      const matches = keysToBlacklist.some((b) => b && (activeId === b || activeEiin === b || activeName === b));
+      if (matches) {
+        window.localStorage.removeItem('schoolAppProfile');
+        window.localStorage.removeItem('schoolName');
+        window.localStorage.removeItem('schoolCode');
+        window.localStorage.removeItem('schoolId');
+        window.localStorage.removeItem('schoolEiinNumber');
+      }
+    }
+  } catch {}
+
+  // 5. Clean up all scoped keys belonging specifically to this school
+  try {
+    const keysToRemove = [];
+    for (let i = 0; i < window.localStorage.length; i++) {
+      const k = window.localStorage.key(i);
+      if (k) {
+        const lowerK = k.toLowerCase();
+        if (keysToBlacklist.some((b) => b && lowerK.includes(b))) {
+          if (
+            k !== 'registeredSchoolsList' &&
+            k !== 'schoolAppRegisteredSchools' &&
+            k !== 'registered_schools' &&
+            k !== 'schoolAppLocalUsers' &&
+            k !== 'progga_deleted_schools_registry'
+          ) {
+            keysToRemove.push(k);
+          }
+        }
+      }
+    }
+    keysToRemove.forEach((k) => window.localStorage.removeItem(k));
+  } catch {}
+
+  invalidateSchoolDataCache();
+  notifySchoolDataChanged();
+  return filtered;
+}
+
 
 /**
  * Synchronously find a registered school profile matching EIIN or School ID/Code.
@@ -297,15 +465,15 @@ export function readStorage(key, fallback, schoolId = getActiveSchoolId()) {
       const rawScoped = window.localStorage.getItem(scopedKey1) || window.localStorage.getItem(scopedKey2);
       if (rawScoped) return JSON.parse(rawScoped);
 
-      // FIX #3: Migration path — if no scoped key exists yet (brand-new school session),
-      // promote the root-key value to the scoped key on first read so the dashboard
-      // isn't empty after school provisioning.
-      const rootRaw = window.localStorage.getItem(key);
-      if (rootRaw) {
-        try {
-          window.localStorage.setItem(scopedKey1, rootRaw);
-        } catch {}
-        return JSON.parse(rootRaw);
+      // Migration path — promote root-key value ONLY for profile metadata
+      if (key === 'schoolAppProfile' || key === 'schoolProfile') {
+        const rootRaw = window.localStorage.getItem(key);
+        if (rootRaw) {
+          try {
+            window.localStorage.setItem(scopedKey1, rootRaw);
+          } catch {}
+          return JSON.parse(rootRaw);
+        }
       }
 
       return fallback;

@@ -42,6 +42,61 @@
 }
 
 /* --------------------------------------------------------------------------
+   Base Screen & Preview Styles for Official Footer & Signature Area
+   -------------------------------------------------------------------------- */
+.print-footer {
+  margin-top: 32px;
+  padding-top: 16px;
+  width: 100%;
+}
+
+.print-signatures-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-end;
+  margin-top: 28px;
+  margin-bottom: 16px;
+  gap: 24px;
+  width: 100%;
+}
+
+.print-signature-item {
+  flex: 1;
+  text-align: center;
+  min-width: 110px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+.print-signature-line {
+  border-top: 1.5px solid #475569;
+  margin-bottom: 6px;
+  width: 100%;
+  max-width: 180px;
+}
+
+.print-signature-label {
+  font-size: 12px;
+  font-weight: 700;
+  color: #334155;
+  display: block;
+}
+
+.print-footer-meta {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  border-top: 1px solid #cbd5e1;
+  padding-top: 8px;
+  margin-top: 12px;
+  font-size: 11px;
+  color: #64748b;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+/* --------------------------------------------------------------------------
    2. Media Print Reset & Shell UI Clean-Up
    -------------------------------------------------------------------------- */
 @media print {
@@ -413,13 +468,13 @@
   }
 
   /* --------------------------------------------------------------------------
-     8. Subtle Dynamic Background Watermark
+     8. Subtle Dynamic Background Watermark & Certificate Print Rules
      -------------------------------------------------------------------------- */
   .print-watermark {
     position: absolute !important;
     top: 50% !important;
     left: 50% !important;
-    transform: translate(-50%, -50%) rotate(-30deg) !important;
+    transform: translate(-50%, -50%) !important;
     font-size: 44pt !important;
     font-weight: 900 !important;
     color: rgba(30, 58, 138, 0.04) !important;
@@ -428,5 +483,36 @@
     z-index: 0 !important;
     text-transform: uppercase !important;
     letter-spacing: 4pt !important;
+    display: flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+  }
+
+  .print-watermark-logo-img {
+    max-width: 360px !important;
+    max-height: 360px !important;
+    object-fit: contain !important;
+    opacity: 0.08 !important;
+    filter: grayscale(10%) !important;
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+  }
+
+  .wit-certificate-frame {
+    background: #fdfbf7 !important;
+    border: 8pt double #0284c7 !important;
+    outline: 1.5pt solid #0369a1 !important;
+    outline-offset: -3pt !important;
+    padding: 14pt 18pt !important;
+    margin: 0 !important;
+    box-shadow: none !important;
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+  }
+
+  .wit-watermark-layer {
+    opacity: 0.09 !important;
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
   }
 }

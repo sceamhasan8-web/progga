@@ -580,3 +580,589 @@
     border: 1px solid #000000 !important;
   }
 }
+
+/* ==========================================================================
+   SCREEN-ONLY RESPONSIVE STYLES FOR MARKSHEET / TRANSCRIPT (Desktop, Tablet, Mobile)
+   Guarantees 100% responsive display on all screens without affecting @media print.
+   ========================================================================== */
+
+/* Tablet & Medium Screens (<= 900px) */
+@media screen and (max-width: 900px) {
+  .transcript-container {
+    max-width: 100%;
+    margin: 14px auto;
+    padding: 20px;
+  }
+
+  .transcript-student-section {
+    grid-template-columns: 1fr 110px;
+    gap: 16px;
+  }
+
+  .transcript-student-grid {
+    gap: 10px 16px;
+  }
+}
+
+/* Mobile & Small Tablets (<= 640px) */
+@media screen and (max-width: 640px) {
+  .mark-sheet-print-area-wrapper {
+    padding: 0 4px;
+  }
+
+  .transcript-container {
+    padding: 14px 12px;
+    margin: 8px 0;
+    border-radius: 10px;
+  }
+
+  .transcript-student-section {
+    display: flex;
+    flex-direction: column-reverse;
+    align-items: center;
+    gap: 16px;
+    margin-bottom: 18px;
+  }
+
+  .transcript-photo-box {
+    width: 100px;
+    height: 120px;
+    margin: 0 auto;
+  }
+
+  .transcript-student-grid {
+    grid-template-columns: 1fr;
+    gap: 8px;
+    width: 100%;
+  }
+
+  .transcript-info-field {
+    padding-bottom: 5px;
+  }
+
+  .transcript-info-label {
+    font-size: 11.5px;
+  }
+
+  .transcript-info-value {
+    font-size: 12.5px;
+  }
+
+  /* Academic Table Responsiveness */
+  .transcript-table-container {
+    margin-bottom: 18px;
+    border-radius: 8px;
+    border: 1px solid #e2e8f0;
+  }
+
+  .transcript-performance-table th {
+    padding: 9px 10px;
+    font-size: 11px;
+  }
+
+  .transcript-performance-table td {
+    padding: 9px 10px;
+    font-size: 12px;
+  }
+
+  /* Summary Grid - Converts to 2x2 grid on mobile */
+  .transcript-summary-grid {
+    grid-template-columns: repeat(2, 1fr);
+    margin-bottom: 20px;
+    border-radius: 8px;
+    gap: 1px;
+    background: #cbd5e1;
+  }
+
+  .transcript-summary-cell {
+    background: #f8fafc;
+    padding: 10px 8px;
+    border-right: none;
+  }
+
+  .transcript-summary-label {
+    font-size: 9.5px;
+  }
+
+  .transcript-summary-value {
+    font-size: 13.5px;
+  }
+
+  /* Responsive Signature Footer for Mobile */
+  .print-footer {
+    margin-top: 20px;
+    padding-top: 12px;
+  }
+
+  .print-signatures-row {
+    flex-wrap: wrap;
+    justify-content: space-around;
+    gap: 16px 12px;
+    margin-top: 20px;
+    margin-bottom: 12px;
+  }
+
+  .print-signature-item {
+    flex: 1 1 95px;
+    max-width: 140px;
+    min-width: 90px;
+  }
+
+  .print-signature-line {
+    max-width: 120px;
+    margin-bottom: 4px;
+  }
+
+  .print-signature-label {
+    font-size: 10.5px;
+  }
+
+  .print-footer-meta {
+    flex-direction: column;
+    text-align: center;
+    gap: 4px;
+    font-size: 10px;
+  }
+
+  /* Marksheet Bottom Action Bar */
+  .mark-sheet-actions {
+    flex-direction: column;
+    gap: 10px;
+    padding: 14px;
+  }
+
+  .mark-sheet-actions button {
+    width: 100%;
+    min-width: 0 !important;
+  }
+}
+
+/* Extra Small Screens (<= 400px) */
+@media screen and (max-width: 400px) {
+  .transcript-container {
+    padding: 10px 8px;
+  }
+
+  .transcript-performance-table th,
+  .transcript-performance-table td {
+    padding: 7px 8px;
+    font-size: 11px;
+  }
+
+  .print-signatures-row {
+    gap: 12px 8px;
+  }
+
+  .print-signature-item {
+    flex: 1 1 80px;
+    max-width: 110px;
+  }
+
+  .print-signature-label {
+    font-size: 9.5px;
+  }
+}
+
+/* ─────────────────────────────────────────────────────────────
+   AUTHENTIC ACADEMIC TRANSCRIPT (WIT CERTIFICATE STYLE)
+   ───────────────────────────────────────────────────────────── */
+.wit-certificate-frame {
+  position: relative;
+  background: #fdfbf7;
+  border: 10px double var(--wit-brand-color, #0284c7);
+  outline: 2px solid var(--wit-brand-dark, #0369a1);
+  outline-offset: -5px;
+  border-radius: 4px;
+  padding: 24px 28px;
+  box-shadow: 0 12px 40px rgba(2, 132, 199, 0.08);
+  font-family: 'Inter', system-ui, -apple-system, sans-serif;
+  color: #0f172a;
+  box-sizing: border-box;
+  overflow: hidden;
+  margin: 10px auto;
+}
+
+.wit-watermark-layer {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+  opacity: 0.09;
+  z-index: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+}
+
+.wit-watermark-img {
+  max-width: 380px;
+  max-height: 380px;
+  object-fit: contain;
+  filter: grayscale(10%);
+}
+
+.wit-certificate-inner {
+  position: relative;
+  z-index: 1;
+}
+
+.wit-cert-header {
+  text-align: center;
+  margin-bottom: 20px;
+}
+
+.wit-inst-name {
+  font-family: 'Cinzel', 'Times New Roman', Georgia, serif;
+  font-size: 20pt;
+  font-weight: 900;
+  color: var(--wit-brand-dark, #0b3b60);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  margin: 0 0 4px 0;
+  line-height: 1.2;
+}
+
+.wit-inst-sub {
+  font-size: 9.5pt;
+  font-weight: 600;
+  color: #475569;
+  margin: 0 0 12px 0;
+}
+
+.wit-logo-badge {
+  width: 72px;
+  height: 72px;
+  margin: 0 auto 10px auto;
+  border-radius: 50%;
+  border: 3px double var(--wit-brand-color, #0284c7);
+  padding: 3px;
+  background: #ffffff;
+  box-shadow: 0 4px 12px rgba(2, 132, 199, 0.15);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.wit-badge-img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  border-radius: 50%;
+}
+
+.wit-exam-title {
+  font-size: 12.5pt;
+  font-weight: 700;
+  color: #1e293b;
+  margin: 0 0 4px 0;
+}
+
+.wit-calligraphic-heading {
+  font-family: 'Dancing Script', 'Playfair Display', 'Times New Roman', Georgia, cursive, serif;
+  font-size: 26pt;
+  font-weight: 700;
+  color: var(--wit-brand-dark, #0b3b60);
+  margin: 2px 0 16px 0;
+  letter-spacing: 1px;
+  font-style: italic;
+}
+
+.wit-student-header-section {
+  display: flex;
+  justify-content: space-between;
+  gap: 20px;
+  align-items: flex-start;
+  margin-bottom: 20px;
+}
+
+.wit-student-details-block {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 9.5pt;
+  color: #0f172a;
+}
+
+.wit-info-row {
+  display: flex;
+  align-items: center;
+  font-size: 9.5pt;
+  line-height: 1.4;
+}
+
+.wit-info-label {
+  min-width: 155px;
+  font-weight: 700;
+  color: #334155;
+}
+
+.wit-info-val {
+  font-weight: 600;
+  color: #0f172a;
+}
+
+.wit-info-split-row {
+  display: flex;
+  gap: 24px;
+}
+
+.wit-info-sub {
+  display: flex;
+  align-items: center;
+}
+
+.wit-info-sub .wit-info-label {
+  min-width: 110px;
+}
+
+.wit-grading-box {
+  width: 210px;
+  flex-shrink: 0;
+}
+
+.wit-grading-table {
+  width: 100%;
+  border-collapse: collapse;
+  border: 1.5px solid var(--wit-brand-dark, #0b3b60);
+  font-size: 8.5pt;
+  text-align: center;
+}
+
+.wit-grading-table th {
+  background: #e0f2fe;
+  color: var(--wit-brand-color, #0284c7);
+  border: 1px solid var(--wit-brand-dark, #0b3b60);
+  padding: 4px 6px;
+  font-weight: 800;
+}
+
+.wit-grading-table td {
+  border: 1px solid var(--wit-brand-dark, #0b3b60);
+  padding: 3px 6px;
+  font-weight: 600;
+  color: #1e293b;
+}
+
+.wit-marks-table-container {
+  margin-bottom: 20px;
+}
+
+.wit-marks-table {
+  width: 100%;
+  border-collapse: collapse;
+  border: 1.5px solid var(--wit-brand-dark, #0b3b60);
+  font-size: 9.5pt;
+}
+
+.wit-marks-table th {
+  background: #f0f9ff;
+  color: var(--wit-brand-color, #0284c7);
+  border: 1px solid var(--wit-brand-dark, #0b3b60);
+  padding: 8px 10px;
+  font-weight: 800;
+  text-transform: uppercase;
+  font-size: 9pt;
+}
+
+.wit-marks-table td {
+  border: 1px solid var(--wit-brand-dark, #0b3b60);
+  padding: 8px 10px;
+  color: #1e293b;
+}
+
+.wit-marks-val {
+  font-weight: 800;
+  color: var(--wit-brand-color, #0284c7);
+  font-size: 10pt;
+}
+
+.wit-highest-val {
+  font-weight: 800;
+  color: #047857;
+  font-size: 9.5pt;
+  background: #ecfdf5;
+  padding: 2px 7px;
+  border-radius: 4px;
+  display: inline-block;
+  border: 1px solid #a7f3d0;
+}
+
+.wit-marks-val.fail {
+  color: #dc2626;
+}
+
+.wit-marks-max {
+  font-size: 8.5pt;
+  color: #64748b;
+  font-weight: 500;
+}
+
+.wit-cq-sub {
+  font-size: 8pt;
+  color: #64748b;
+  margin-top: 2px;
+}
+
+.wit-fail-tag {
+  margin-left: 6px;
+  font-size: 8pt;
+  background: #fee2e2;
+  color: #b91c1c;
+  padding: 1px 6px;
+  border-radius: 4px;
+  font-weight: 800;
+}
+
+.wit-gpa-overall-cell {
+  background: #f8fafc;
+  border-left: 2px solid var(--wit-brand-dark, #0b3b60) !important;
+  vertical-align: middle;
+}
+
+.wit-gpa-badge-box {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 10px 4px;
+}
+
+.wit-gpa-grade {
+  font-size: 26pt;
+  font-weight: 900;
+  color: var(--wit-brand-dark, #0b3b60);
+  line-height: 1;
+  margin-bottom: 2px;
+}
+
+.wit-gpa-score {
+  font-size: 14pt;
+  font-weight: 800;
+  color: var(--wit-brand-color, #0284c7);
+  margin-bottom: 4px;
+}
+
+.wit-gpa-label {
+  font-size: 8pt;
+  font-weight: 900;
+  letter-spacing: 1px;
+  color: #475569;
+  border-top: 1px solid #cbd5e1;
+  padding-top: 4px;
+  width: 80%;
+}
+
+.wit-grand-total-row {
+  background: #f1f5f9;
+  font-weight: 800;
+}
+
+.wit-grand-total-row td {
+  border-top: 2px solid var(--wit-brand-dark, #0b3b60) !important;
+}
+
+.wit-cert-footer {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-end;
+  margin-top: 28px;
+  padding-top: 12px;
+}
+
+.wit-footer-left {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  align-items: flex-start;
+}
+
+.wit-qr-container {
+  padding: 4px;
+  border: 1px solid #cbd5e1;
+  border-radius: 6px;
+  background: #ffffff;
+}
+
+.wit-pub-date {
+  font-size: 8.5pt;
+  color: #475569;
+  margin-top: 2px;
+}
+
+.wit-footer-center,
+.wit-footer-right {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  min-width: 170px;
+}
+
+.wit-seal-space {
+  height: 48px;
+  width: 100%;
+}
+
+.wit-seal-circle.blue {
+  border-color: var(--wit-brand-dark, #0b3b60);
+  color: var(--wit-brand-dark, #0b3b60);
+}
+
+.wit-signature-line {
+  width: 140px;
+  height: 1px;
+  background: #334155;
+  margin-bottom: 4px;
+}
+
+.wit-signature-title {
+  font-size: 9.5pt;
+  font-weight: 800;
+  color: #0f172a;
+}
+
+.wit-sub-meta {
+  font-size: 8pt;
+  color: #64748b;
+  margin-top: 2px;
+}
+
+/* Mobile & Tablet Responsiveness for Certificate */
+@media screen and (max-width: 768px) {
+  .wit-certificate-frame {
+    padding: 14px;
+    border-width: 6px;
+  }
+
+  .wit-inst-name {
+    font-size: 16pt;
+  }
+
+  .wit-calligraphic-heading {
+    font-size: 20pt;
+  }
+
+  .wit-student-header-section {
+    flex-direction: column;
+    gap: 14px;
+  }
+
+  .wit-grading-box {
+    width: 100%;
+  }
+
+  .wit-info-split-row {
+    flex-direction: column;
+    gap: 4px;
+  }
+
+  .wit-cert-footer {
+    flex-direction: column;
+    align-items: center;
+    gap: 20px;
+  }
+}

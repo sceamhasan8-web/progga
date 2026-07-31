@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useState } from 'react';
-import { deleteResultEntry, saveResultEntry, subscribeToResults, subscribeToExams, saveExamSession, deleteExamSession } from '../firebase/firestoreSchema.js';
+import { useEffect, useMemo, useState, useCallback } from 'react';
+import { deleteResultEntry, saveResultEntry, subscribeToResults, subscribeToExams, saveExamSession, deleteExamSession, getStoredResultsFromLocal } from '../firebase/firestoreSchema.js';
 import { getBangladeshGradeInfo, getDynamicGradeInfo, getDynamicGradeInfoWithComponents, resolveRuleTotals } from '../utils/bangladeshGrading.js';
 import { useSchoolProfile } from '../context/SchoolProfileContext.jsx';
 import { useAuth } from '../context/AuthContext.jsx';
@@ -55,12 +55,12 @@ const StatusBadge = ({ status }) => {
 const GradeBadge = ({ grade }) => {
   const gradeColors = {
     'A+': '#6d28d9',
-    'A':  '#1d4ed8',
+    'A': '#1d4ed8',
     'A-': '#0369a1',
-    'B':  '#15803d',
-    'C':  '#b45309',
-    'D':  '#c2410c',
-    'F':  '#b91c1c',
+    'B': '#15803d',
+    'C': '#b45309',
+    'D': '#c2410c',
+    'F': '#b91c1c',
   };
 
   return (
@@ -82,6 +82,28 @@ const GradeBadge = ({ grade }) => {
 };
 
 const DEFAULT_SUBJECTS = ['Mathematics', 'English', 'Science'];
+
+const getStoredExamSessions = (schoolId) => {
+  if (typeof window === 'undefined' || !window.localStorage) return [];
+  try {
+    const key = schoolId ? `progga_exam_sessions_${schoolId}` : 'progga_exam_sessions';
+    const raw = window.localStorage.getItem(key);
+    return raw ? JSON.parse(raw) : [];
+  } catch {
+    return [];
+  }
+};
+
+const saveStoredExamSessions = (sessions, schoolId) => {
+  if (typeof window === 'undefined' || !window.localStorage) return;
+  try {
+    const key = schoolId ? `progga_exam_sessions_${schoolId}` : 'progga_exam_sessions';
+    const jsonStr = JSON.stringify(sessions);
+    window.localStorage.setItem(key, jsonStr);
+  } catch (err) {
+    console.warn('Error writing exam sessions to localStorage:', err);
+  }
+};
 
 const normalizeSubjects = (subjects) => Array.isArray(subjects)
   ? [...new Set(subjects.map((subject) => String(subject || '').trim()).filter(Boolean))]
@@ -136,9 +158,10 @@ export default function ExamResultView({ classes = [], defaultToEntry = false, r
     || user?.schoolId
     || user?.schoolCode
     || user?.eiinNumber
+    || (Array.isArray(classes) && classes.find((c) => c?.schoolId)?.schoolId)
     || (typeof window !== 'undefined' && window.localStorage
-        ? (window.localStorage.getItem('schoolId') || window.localStorage.getItem('schoolCode') || window.localStorage.getItem('schoolEiinNumber'))
-        : '')
+      ? (window.localStorage.getItem('schoolId') || window.localStorage.getItem('schoolCode') || window.localStorage.getItem('schoolEiinNumber'))
+      : '')
     || '';
 
   // Search & Filter States
@@ -170,7 +193,7 @@ export default function ExamResultView({ classes = [], defaultToEntry = false, r
   const [deletedResultKeys, setDeletedResultKeys] = useState([]);
 
   // Exam States
-  const [examSessions, setExamSessions] = useState([]);
+  const [examSessions, setExamSessions] = useState(() => getStoredExamSessions(activeSchoolId));
   const [selectedExamSession, setSelectedExamSession] = useState(null);
   const [showConfigModal, setShowConfigModal] = useState(false);
   const [deletedExamKeys, setDeletedExamKeys] = useState(() => {
@@ -222,13 +245,15 @@ export default function ExamResultView({ classes = [], defaultToEntry = false, r
         )
       );
 
-      setExamSessions((prev) =>
-        prev.filter(
+      setExamSessions((prev) => {
+        const next = prev.filter(
           (item) =>
             (item?.examId || item?.id || item?.key) !== targetExamId ||
             (examClass && item?.targetClass !== examClass)
-        )
-      );
+        );
+        saveStoredExamSessions(next, activeSchoolId);
+        return next;
+      });
 
       const keysToAdd = [
         targetExamId,
@@ -278,13 +303,31 @@ export default function ExamResultView({ classes = [], defaultToEntry = false, r
   };
 
   useEffect(() => {
+    // Initial load from local storage
+    const initialLocal = getStoredResultsFromLocal(activeSchoolId);
+    if (initialLocal.length > 0) {
+      setFirestoreResults(initialLocal);
+    }
+
     const unsubscribe = subscribeToResults(
       (snapshot) => {
         if (!snapshot || !snapshot.docs) return;
-        setFirestoreResults(snapshot.docs.map((item) => ({ key: item.id, ...item.data() })));
+        const firestoreDocs = snapshot.docs.map((item) => {
+          const data = item.data() || {};
+          return { key: item.id, id: item.id, ...data };
+        });
+        const localDocs = getStoredResultsFromLocal(activeSchoolId);
+        const map = new Map();
+        [...localDocs, ...firestoreDocs].forEach((item) => {
+          const key = item?.key || item?.id || item?.resultId;
+          if (key) map.set(key, { ...map.get(key), ...item });
+        });
+        setFirestoreResults(Array.from(map.values()));
       },
       (err) => {
         console.warn('Could not subscribe to result entries:', err);
+        const localDocs = getStoredResultsFromLocal(activeSchoolId);
+        if (localDocs.length > 0) setFirestoreResults(localDocs);
       },
       activeSchoolId
     );
@@ -298,7 +341,21 @@ export default function ExamResultView({ classes = [], defaultToEntry = false, r
     const unsubscribe = subscribeToExams(
       (snapshot) => {
         if (!snapshot || !snapshot.docs) return;
-        setExamSessions(snapshot.docs.map((item) => ({ key: item.id, ...item.data() })));
+        const firestoreDocs = snapshot.docs.map((item) => {
+          const data = item.data() || {};
+          const examId = data.examId || item.id;
+          return { key: item.id, id: item.id, examId, ...data };
+        });
+
+        const localDocs = getStoredExamSessions(activeSchoolId);
+        const map = new Map();
+        [...localDocs, ...firestoreDocs].forEach((item) => {
+          const id = item?.examId || item?.id || item?.key;
+          if (id) map.set(id, { ...map.get(id), ...item });
+        });
+        const merged = Array.from(map.values());
+        setExamSessions(merged);
+        saveStoredExamSessions(merged, activeSchoolId);
       },
       (err) => {
         console.warn('Could not subscribe to exam sessions:', err);
@@ -338,9 +395,16 @@ export default function ExamResultView({ classes = [], defaultToEntry = false, r
   const getGradeFromMarks = (marks) => getBangladeshGradeInfo(marks).grade;
 
   const safeClasses = useMemo(() => sortClasses(Array.isArray(classes) ? classes : []), [classes]);
-  const allowedClassNames = useMemo(() => new Set(safeClasses.map(c => c?.className).filter(Boolean)), [safeClasses]);
-  const hasClassScope = allowedClassNames.size > 0;
-  const isResultInAllowedClass = (result) => !hasClassScope || allowedClassNames.has(result?.class);
+  const allowedClassNamesNormalized = useMemo(() =>
+    new Set(safeClasses.map(c => String(c?.className || '').trim().toLowerCase()).filter(Boolean)),
+    [safeClasses]
+  );
+  const hasClassScope = allowedClassNamesNormalized.size > 0;
+  const isResultInAllowedClass = useCallback((result) => {
+    if (!hasClassScope) return true;
+    const resClass = String(result?.class || result?.targetClass || '').trim().toLowerCase();
+    return allowedClassNamesNormalized.has(resClass);
+  }, [hasClassScope, allowedClassNamesNormalized]);
 
   const classOptions = useMemo(() => sortClasses(safeClasses.map(c => c?.className).filter(Boolean)), [safeClasses]);
   const selectedClassData = safeClasses.find(c => c?.className === entryMeta.class);
@@ -417,7 +481,7 @@ export default function ExamResultView({ classes = [], defaultToEntry = false, r
     setEntryRows([{
       id: `${Date.now()}-edit`,
       subject: result.subject,
-      cqMarks:  result.cqMarks  != null ? String(result.cqMarks)  : String(result.marks ?? ''),
+      cqMarks: result.cqMarks != null ? String(result.cqMarks) : String(result.marks ?? ''),
       mcqMarks: result.mcqMarks != null ? String(result.mcqMarks) : '',
     }]);
     setShowEntryForm(true);
@@ -579,21 +643,21 @@ export default function ExamResultView({ classes = [], defaultToEntry = false, r
       // Resolve rule for this subject from the exam session
       const results = (editingResultSource === 'firestore' ? firestoreResults : enteredResults).filter(isResultInAllowedClass);
       const originalResult = results.find(r => r.key === editingResultKey);
-      const examIdToSave = originalResult?.examId || selectedExamSession?.examId || 'current';
-      const examObj = examSessions.find(e => e.examId === examIdToSave) || selectedExamSession;
+      const examIdToSave = originalResult?.examId || selectedExamSession?.examId || selectedExamSession?.id || selectedExamSession?.key || 'current';
+      const examObj = examSessions.find(e => (e.examId || e.id || e.key) === examIdToSave) || selectedExamSession;
       const rule = examObj?.subjectRules?.[row.subject] || { totalMarks: 100, passMarks: 33 };
       const resolved = resolveRuleTotals(rule);
 
       let cqMarks, mcqMarks, marks;
       if (resolved.hasCqMcq) {
-        cqMarks  = Number(row.cqMarks ?? 0);
+        cqMarks = Number(row.cqMarks ?? 0);
         mcqMarks = resolved.hasMcq ? Number(row.mcqMarks ?? 0) : 0;
-        marks    = cqMarks + mcqMarks;
+        marks = cqMarks + mcqMarks;
       } else {
         // Legacy: cqMarks holds the single combined mark
-        marks    = parseInt(row.cqMarks ?? row.marks, 10);
+        marks = parseInt(row.cqMarks ?? row.marks, 10);
         if (Number.isNaN(marks)) return;
-        cqMarks  = marks;
+        cqMarks = marks;
         mcqMarks = 0;
       }
 
@@ -621,7 +685,7 @@ export default function ExamResultView({ classes = [], defaultToEntry = false, r
       };
 
       if (editingResultSource === 'firestore') {
-        await saveResultEntry({ ...updatedResult, key: editingResultKey });
+        await saveResultEntry({ ...updatedResult, schoolId: activeSchoolId, key: editingResultKey }, activeSchoolId);
       } else {
         setEnteredResults(prev => prev.map(result => result.key === editingResultKey ? {
           ...result,
@@ -629,7 +693,7 @@ export default function ExamResultView({ classes = [], defaultToEntry = false, r
         } : result));
       }
     } else {
-      const examIdToSave = selectedExamSession?.examId || 'current';
+      const examIdToSave = selectedExamSession?.examId || selectedExamSession?.id || selectedExamSession?.key || 'current';
       const cleanStudentId = String(entryMeta.studentId || entryMeta.roll || entryMeta.name || 'stu')
         .trim()
         .toLowerCase()
@@ -641,14 +705,14 @@ export default function ExamResultView({ classes = [], defaultToEntry = false, r
 
         let cqMarks, mcqMarks, marks;
         if (resolved.hasCqMcq) {
-          cqMarks  = Number(row.cqMarks ?? 0);
+          cqMarks = Number(row.cqMarks ?? 0);
           mcqMarks = resolved.hasMcq ? Number(row.mcqMarks ?? 0) : 0;
-          marks    = cqMarks + mcqMarks;
+          marks = cqMarks + mcqMarks;
         } else {
-          marks    = parseInt(row.cqMarks ?? row.marks, 10);
-          cqMarks  = Number.isNaN(marks) ? 0 : marks;
+          marks = parseInt(row.cqMarks ?? row.marks, 10);
+          cqMarks = Number.isNaN(marks) ? 0 : marks;
           mcqMarks = 0;
-          marks    = Number.isNaN(marks) ? 0 : marks;
+          marks = Number.isNaN(marks) ? 0 : marks;
         }
 
         const gradeInfo = getDynamicGradeInfoWithComponents(cqMarks, mcqMarks, rule);
@@ -673,11 +737,12 @@ export default function ExamResultView({ classes = [], defaultToEntry = false, r
           gradePoint: gradeInfo.gradePoint,
           remarks: gradeInfo.remarks,
           examId: examIdToSave,
+          schoolId: activeSchoolId,
           key: resultKey,
         };
       });
 
-      await Promise.all(newRows.map(({ key, ...result }) => saveResultEntry({ ...result, key })));
+      await Promise.all(newRows.map(({ key, ...result }) => saveResultEntry({ ...result, schoolId: activeSchoolId, key }, activeSchoolId)));
     }
 
     showAlert('Result saved and verified in Firebase successfully.', 'Result Saved', 'success');
@@ -695,33 +760,45 @@ export default function ExamResultView({ classes = [], defaultToEntry = false, r
   }, [classes]);
 
   // Helper to check if an exam has been deleted
-  const isExamDeleted = (examId, targetClass, examName) => {
+  const isExamDeleted = useCallback((examId, targetClass, examName) => {
     if (!deletedExamKeys || deletedExamKeys.length === 0) return false;
+    const cleanId = String(examId || '').trim();
+    const cleanClass = String(targetClass || '').trim();
+    const cleanName = String(examName || '').trim();
     return (
-      deletedExamKeys.includes(examId) ||
-      deletedExamKeys.includes(`${examId}::${targetClass}`) ||
-      deletedExamKeys.includes(`${examName}::${targetClass}`)
+      (cleanId && deletedExamKeys.includes(cleanId)) ||
+      (cleanId && cleanClass && deletedExamKeys.includes(`${cleanId}::${cleanClass}`)) ||
+      (cleanName && cleanClass && deletedExamKeys.includes(`${cleanName}::${cleanClass}`))
     );
-  };
+  }, [deletedExamKeys]);
+
+  const allResults = useMemo(() => {
+    return [...(enteredResults || []), ...(firestoreResults || [])];
+  }, [enteredResults, firestoreResults]);
 
   // Helper to resolve exams with results
   const uniqueExamIdsInResults = useMemo(() => {
     const ids = new Set();
-    firestoreResults.forEach((r) => {
-      ids.add(r.examId || 'current');
+    allResults.forEach((r) => {
+      if (r) ids.add(r.examId || 'current');
     });
     return [...ids];
-  }, [firestoreResults]);
+  }, [allResults]);
 
   const examsWithResults = useMemo(() => {
     const list = [];
-    
+
     // 1. Add all configured exam sessions from Firebase
     if (Array.isArray(examSessions)) {
       examSessions.forEach((e) => {
-        if (e && e.examId) {
-          if (!isExamDeleted(e.examId, e.targetClass, e.name)) {
-            list.push(e);
+        const examId = e?.examId || e?.id || e?.key;
+        if (e && examId) {
+          if (!isExamDeleted(examId, e.targetClass, e.name)) {
+            list.push({
+              ...e,
+              examId,
+              branchKey: e.branchKey || getBranchKeyByClass(e.targetClass || e),
+            });
           }
         }
       });
@@ -730,18 +807,19 @@ export default function ExamResultView({ classes = [], defaultToEntry = false, r
     // 2. Add any legacy exam sessions from results that aren't already added
     if (Array.isArray(uniqueExamIdsInResults)) {
       uniqueExamIdsInResults.forEach((examId) => {
-        const matchingResults = firestoreResults.filter(r => (r.examId || 'current') === examId);
+        const matchingResults = allResults.filter(r => (r.examId || 'current') === examId);
         const targetClasses = [...new Set(matchingResults.map(r => r.class).filter(Boolean))];
-        
+
         targetClasses.forEach((cls) => {
           const name = examId === 'current' ? 'General Term (Legacy)' : examId;
           if (isExamDeleted(examId, cls, name)) return;
-          if (list.some((e) => e.examId === examId && e.targetClass === cls)) return;
+          if (list.some((e) => e.examId === examId && String(e.targetClass || '').trim().toLowerCase() === String(cls || '').trim().toLowerCase())) return;
 
           list.push({
             examId: examId,
             name: name,
             targetClass: cls,
+            branchKey: getBranchKeyByClass(cls),
             subjectRules: {},
             isLegacy: true,
           });
@@ -749,7 +827,7 @@ export default function ExamResultView({ classes = [], defaultToEntry = false, r
       });
     }
     return list;
-  }, [examSessions, uniqueExamIdsInResults, firestoreResults, deletedExamKeys]);
+  }, [examSessions, uniqueExamIdsInResults, allResults, isExamDeleted]);
 
   // Group results by student for the selected exam session
   const studentResults = useMemo(() => {
@@ -786,14 +864,21 @@ export default function ExamResultView({ classes = [], defaultToEntry = false, r
         });
     }
 
-    const activeResults = [...(enteredResults || []), ...(firestoreResults || [])].filter((r) => {
+    const targetExamId = selectedExamSession?.examId || selectedExamSession?.id || selectedExamSession?.key;
+    const targetClassClean = String(selectedExamSession?.targetClass || '').trim().toLowerCase();
+
+    const activeResults = allResults.filter((r) => {
       if (!r) return false;
-      const matchesClass = r?.class === selectedExamSession?.targetClass;
-      const matchesExam = (r?.examId || 'current') === selectedExamSession?.examId;
+      const rClassClean = String(r?.class || '').trim().toLowerCase();
+      const rExamClean = String(r?.examId || r?.term || 'current').trim().toLowerCase();
+      const targetExamClean = String(targetExamId || 'current').trim().toLowerCase();
+
+      const matchesClass = rClassClean === targetClassClean;
+      const matchesExam = rExamClean === targetExamClean;
       return matchesClass && matchesExam && isResultInAllowedClass(r);
     });
 
-    const targetClassData = (classes || []).find((cls) => cls && cls.className === selectedExamSession?.targetClass);
+    const targetClassData = (classes || []).find((cls) => cls && String(cls.className || '').trim().toLowerCase() === targetClassClean);
     const enrolledStudents = targetClassData?.students || [];
     const hasEnrolledRoster = Array.isArray(classes) && classes.length > 0 && enrolledStudents.length > 0;
 
@@ -806,12 +891,21 @@ export default function ExamResultView({ classes = [], defaultToEntry = false, r
         if (hasEnrolledRoster) {
           const isEnrolled = enrolledStudents.some((s) => {
             if (!s) return false;
-            const sId = String(s?.id || s?.studentId || '').trim().toLowerCase();
+            const sId = String(s?.id || s?.studentId || s?.userId || '').trim().toLowerCase();
             const rId = String(result?.studentId || '').trim().toLowerCase();
             if (sId && rId && sId === rId) return true;
-            return String(s?.roll || '').trim() === String(result?.roll || '').trim();
+
+            const sRoll = String(s?.roll || '').trim().toLowerCase();
+            const rRoll = String(result?.roll || '').trim().toLowerCase();
+            if (sRoll && rRoll && (sRoll === rRoll || parseInt(sRoll, 10) === parseInt(rRoll, 10))) return true;
+
+            const sName = String(s?.name || s?.studentName || '').trim().toLowerCase();
+            const rName = String(result?.name || result?.studentName || '').trim().toLowerCase();
+            if (sName && rName && sName === rName) return true;
+
+            return false;
           });
-          if (!isEnrolled) return; // Skip orphan results of deleted students
+          if (!isEnrolled && !(result?.marks != null || result?.cqMarks != null)) return; // Skip orphan results only if no marks entered
         }
 
         sequence += 1;
@@ -834,7 +928,7 @@ export default function ExamResultView({ classes = [], defaultToEntry = false, r
 
       const resolved = resolveRuleTotals(rule);
 
-      const rawCq  = result.cqMarks  != null && result.cqMarks  !== '' ? Number(result.cqMarks)  : null;
+      const rawCq = result.cqMarks != null && result.cqMarks !== '' ? Number(result.cqMarks) : null;
       const rawMcq = result.mcqMarks != null && result.mcqMarks !== '' ? Number(result.mcqMarks) : null;
       const hasCqMcqData = rawCq != null && Number.isFinite(rawCq);
 
@@ -844,16 +938,16 @@ export default function ExamResultView({ classes = [], defaultToEntry = false, r
 
       const gradeInfo = hasCqMcqData || resolved.hasCqMcq
         ? getDynamicGradeInfoWithComponents(
-            hasCqMcqData ? rawCq : calculatedMarks,
-            rawMcq ?? 0,
-            rule
-          )
+          hasCqMcqData ? rawCq : calculatedMarks,
+          rawMcq ?? 0,
+          rule
+        )
         : getDynamicGradeInfo(calculatedMarks, resolved.totalMarks, resolved.passMarks);
 
       grouped[key].subjects.push({
         subject: result.subject,
         marks: calculatedMarks,
-        cqMarks:  rawCq,
+        cqMarks: rawCq,
         mcqMarks: rawMcq,
         status: gradeInfo.status,
         grade: gradeInfo.grade,
@@ -912,10 +1006,10 @@ export default function ExamResultView({ classes = [], defaultToEntry = false, r
         const hasCqMcqData = subject.cqMarks != null && Number.isFinite(Number(subject.cqMarks));
         const gradeInfo = hasCqMcqData || resolved.hasCqMcq
           ? getDynamicGradeInfoWithComponents(
-              hasCqMcqData ? subject.cqMarks : subject.marks,
-              subject.mcqMarks ?? 0,
-              rule
-            )
+            hasCqMcqData ? subject.cqMarks : subject.marks,
+            subject.mcqMarks ?? 0,
+            rule
+          )
           : getDynamicGradeInfo(subject.marks, resolved.totalMarks, resolved.passMarks);
 
         if (subject.status === 'Fail' || subject.grade === 'F' || gradeInfo.grade === 'F' || gradeInfo.status === 'Fail') {
@@ -931,11 +1025,15 @@ export default function ExamResultView({ classes = [], defaultToEntry = false, r
 
   const getProficiencyFromPercentage = (percentage) => getBangladeshGradeInfo(percentage).remarks;
 
-  // Returns the expected subject list for a student based on their class+group config
+  // Returns the expected subject list for a student based on their exam config or class+group config
   const getExpectedSubjects = (student) => {
+    if (selectedExamSession?.subjectRules && Object.keys(selectedExamSession.subjectRules).length > 0) {
+      return Object.keys(selectedExamSession.subjectRules).map((sub) => String(sub || '').trim()).filter(Boolean);
+    }
+
     const classData = (classes || []).find((c) => c.className === student.class);
     if (!classData || !classData.groupSubjects) return [];
-    
+
     const studentGroup = String(student.group || '').trim();
     let expected = [];
     if (studentGroup && classData.groupSubjects[studentGroup]) {
@@ -964,32 +1062,34 @@ export default function ExamResultView({ classes = [], defaultToEntry = false, r
     return expected.every((sub) => enteredSubjectNames.has(sub.toLowerCase()));
   };
 
-  const calculateResultSummary = (subjects = [], complete = true) => {
+  const calculateResultSummary = (subjects = [], complete = true, studentObj = null) => {
     const rules = selectedExamSession?.subjectRules || {};
-    if (!complete || subjects.length === 0) {
-      return {
-        totalMarks: 0,
-        maxMarks: 0,
-        percentage: 0,
-        average: 0,
-        averageGrade: 'F',
-        gradePoint: 0.00,
-        proficiency: 'Result Pending',
-        status: 'Fail',
-      };
-    }
-
     let totalMarksObtained = 0;
     let maxConfiguredMarks = 0;
     let totalGradePoint = 0;
     let hasSubjectFail = false;
 
+    // Resolve expected subject list for accurate total max marks calculation
+    const expectedSubjectsList = studentObj ? getExpectedSubjects(studentObj) : (selectedExamSession?.subjectRules ? Object.keys(selectedExamSession.subjectRules) : []);
+
+    if (expectedSubjectsList.length > 0) {
+      expectedSubjectsList.forEach((subName) => {
+        const rule = rules[subName] || { totalMarks: 100, passMarks: 33 };
+        const resolved = resolveRuleTotals(rule);
+        maxConfiguredMarks += resolved.totalMarks;
+      });
+    }
+
     subjects.forEach((sub) => {
-      const rule    = rules[sub.subject] || { totalMarks: 100, passMarks: 33 };
+      const rule = rules[sub.subject] || { totalMarks: 100, passMarks: 33 };
       const resolved = resolveRuleTotals(rule);
-      const marks   = Number(sub.marks);
-      totalMarksObtained  += marks;
-      maxConfiguredMarks  += resolved.totalMarks;
+      const marks = Number(sub.marks);
+      if (Number.isFinite(marks)) {
+        totalMarksObtained += marks;
+      }
+      if (expectedSubjectsList.length === 0) {
+        maxConfiguredMarks += resolved.totalMarks;
+      }
 
       // Re-compute with components if the subject has them
       const hasCqMcq = sub.cqMarks != null && Number.isFinite(Number(sub.cqMarks));
@@ -1002,6 +1102,20 @@ export default function ExamResultView({ classes = [], defaultToEntry = false, r
       }
       totalGradePoint += gradeInfo.gradePoint;
     });
+
+    if (!complete || subjects.length === 0) {
+      const percentage = maxConfiguredMarks > 0 ? (totalMarksObtained / maxConfiguredMarks) * 100 : 0;
+      return {
+        totalMarks: totalMarksObtained,
+        maxMarks: maxConfiguredMarks,
+        percentage: Math.round(percentage * 10) / 10,
+        average: subjects.length > 0 ? Math.round((totalMarksObtained / subjects.length) * 10) / 10 : 0,
+        averageGrade: 'Pending',
+        gradePoint: 0.00,
+        proficiency: 'Result Pending',
+        status: 'Pending',
+      };
+    }
 
     const averageGpa = subjects.length > 0 ? totalGradePoint / subjects.length : 0;
     const percentage = maxConfiguredMarks > 0 ? (totalMarksObtained / maxConfiguredMarks) * 100 : 0;
@@ -1067,16 +1181,52 @@ export default function ExamResultView({ classes = [], defaultToEntry = false, r
   }, [rankedFilteredResults, t]);
 
   const visibleSubjectColumns = useMemo(() => {
-    const subjects = new Set();
-    rankedFilteredResults.forEach((student) => {
-      (student.subjects || []).forEach((subject) => {
-        if (!searchSubject || subject?.subject?.toLowerCase().includes(searchSubject.toLowerCase())) {
-          subjects.add(subject.subject);
+    const subjectsSet = new Set();
+
+    // 1. If selectedExamSession has configured subjectRules, prioritize those exact subjects for this exam
+    if (selectedExamSession?.subjectRules && Object.keys(selectedExamSession.subjectRules).length > 0) {
+      Object.keys(selectedExamSession.subjectRules).forEach((sub) => {
+        if (sub && (!searchSubject || sub.toLowerCase().includes(searchSubject.toLowerCase()))) {
+          subjectsSet.add(sub);
+        }
+      });
+    }
+
+    // 2. Add any subjects that already have results recorded in this specific exam session
+    (rankedFilteredResults || []).forEach((student) => {
+      (student.subjects || []).forEach((subObj) => {
+        const subName = subObj?.subject;
+        if (subName && (!searchSubject || subName.toLowerCase().includes(searchSubject.toLowerCase()))) {
+          subjectsSet.add(subName);
         }
       });
     });
-    return [...subjects].sort();
-  }, [rankedFilteredResults, searchSubject, t]);
+
+    // 3. Fallback ONLY if selectedExamSession has NO subjectRules configured and NO results entered yet
+    if (subjectsSet.size === 0 && selectedExamSession?.targetClass) {
+      const classObj = (classes || []).find((c) => c && c.className === selectedExamSession.targetClass);
+      if (classObj?.groupSubjects) {
+        Object.values(classObj.groupSubjects).forEach((subList) => {
+          if (Array.isArray(subList)) {
+            subList.forEach((s) => {
+              if (s && (!searchSubject || s.toLowerCase().includes(searchSubject.toLowerCase()))) {
+                subjectsSet.add(String(s).trim());
+              }
+            });
+          }
+        });
+      }
+      if (Array.isArray(classObj?.subjects)) {
+        classObj.subjects.forEach((s) => {
+          if (s && (!searchSubject || s.toLowerCase().includes(searchSubject.toLowerCase()))) {
+            subjectsSet.add(String(s).trim());
+          }
+        });
+      }
+    }
+
+    return [...subjectsSet].filter(Boolean);
+  }, [selectedExamSession, classes, rankedFilteredResults, searchSubject]);
 
   const handleReset = () => {
     setSearchClass('');
@@ -1112,6 +1262,36 @@ export default function ExamResultView({ classes = [], defaultToEntry = false, r
       subjects: matchedSubjects,
     };
   }, [rankedFilteredResults, selectedStudentKey, searchSubject]);
+
+  const highestMarksMap = useMemo(() => {
+    const map = {};
+    const dataset = rankedFilteredResults.length > 0 ? rankedFilteredResults : (enteredResults || []);
+    dataset.forEach((student) => {
+      (student.subjects || []).forEach((sub) => {
+        if (sub && sub.subject && sub.marks != null) {
+          const val = Number(sub.marks);
+          if (Number.isFinite(val)) {
+            if (map[sub.subject] === undefined || val > map[sub.subject]) {
+              map[sub.subject] = val;
+            }
+          }
+        }
+      });
+    });
+    return map;
+  }, [rankedFilteredResults, enteredResults]);
+
+  const classHighestTotalMarks = useMemo(() => {
+    const dataset = rankedFilteredResults.length > 0 ? rankedFilteredResults : (enteredResults || []);
+    let maxTotal = 0;
+    dataset.forEach((student) => {
+      const summary = calculateResultSummary(student.subjects || [], student.isComplete);
+      if (summary && summary.totalMarks > maxTotal) {
+        maxTotal = summary.totalMarks;
+      }
+    });
+    return maxTotal > 0 ? maxTotal : null;
+  }, [rankedFilteredResults, enteredResults]);
 
   const renderEntrySection = () => (
     <div className="mark-sheet-no-print" style={{
@@ -1166,7 +1346,7 @@ export default function ExamResultView({ classes = [], defaultToEntry = false, r
           <div>
             <h4 style={{ margin: 0, fontSize: '16px', color: '#fff', fontWeight: '800' }}>{entryMeta.name || 'Student Information'}</h4>
             <p style={{ margin: '5px 0 0', color: '#bfdbfe', fontSize: '13px', fontWeight: '500' }}>
-              Roll: <strong style={{color:'#fff'}}>{entryMeta.roll || 'N/A'}</strong> • Father: <strong style={{color:'#fff'}}>{entryMeta.fatherName || 'N/A'}</strong> • Group: <strong style={{color:'#fff'}}>{entryMeta.group || 'N/A'}</strong>
+              Roll: <strong style={{ color: '#fff' }}>{entryMeta.roll || 'N/A'}</strong> • Father: <strong style={{ color: '#fff' }}>{entryMeta.fatherName || 'N/A'}</strong> • Group: <strong style={{ color: '#fff' }}>{entryMeta.group || 'N/A'}</strong>
             </p>
           </div>
           <span style={{
@@ -1254,17 +1434,19 @@ export default function ExamResultView({ classes = [], defaultToEntry = false, r
           {entryRows.map((row, index) => {
             const rowRule = selectedExamSession?.subjectRules?.[row.subject] || { totalMarks: 100, passMarks: 33 };
             const rowResolved = resolveRuleTotals(rowRule);
-            const rowHasCqMcq  = rowResolved.hasCqMcq;
-            const rowHasMcq    = rowResolved.hasMcq;
-            const cqMax  = rowHasCqMcq ? Number(rowRule.cqTotal)  : rowResolved.totalMarks;
+            const rowHasCqMcq = rowResolved.hasCqMcq;
+            const rowHasMcq = rowResolved.hasMcq;
+            const cqMax = rowHasCqMcq ? Number(rowRule.cqTotal) : rowResolved.totalMarks;
             const mcqMax = rowHasCqMcq && rowHasMcq ? Number(rowRule.mcqTotal) : 40;
-            const cqV    = String(row.cqMarks  ?? '');
-            const mcqV   = String(row.mcqMarks ?? '');
+            const cqV = String(row.cqMarks ?? '');
+            const mcqV = String(row.mcqMarks ?? '');
             const liveTotal = rowHasCqMcq
               ? (cqV !== '' || mcqV !== '' ? Number(cqV || 0) + Number(mcqV || 0) : null)
               : (cqV !== '' ? Number(cqV) : null);
-            const rowCqFail  = rowHasCqMcq && cqV !== '' && Number(cqV)  < Number(rowRule.cqPass);
+            const rowCqFail = rowHasCqMcq && cqV !== '' && Number(cqV) < Number(rowRule.cqPass);
             const rowMcqFail = rowHasCqMcq && rowHasMcq && mcqV !== '' && Number(mcqV) < Number(rowRule.mcqPass);
+
+            const isPrimarySession = selectedExamSession?.branchKey === 'primary' || getBranchKeyByClass(selectedExamSession?.targetClass) === 'primary';
 
             return (
               <div
@@ -1318,11 +1500,11 @@ export default function ExamResultView({ classes = [], defaultToEntry = false, r
                   />
                 </div>
 
-                {/* MCQ input — only when rule has MCQ component */}
+                {/* MCQ / Tutorial input — only when rule has MCQ/Tutorial component */}
                 {rowHasCqMcq && rowHasMcq && (
                   <div>
                     <label style={{ display: 'block', marginBottom: '6px', color: rowMcqFail ? '#b91c1c' : '#1a2e4a', fontSize: '11px', fontWeight: '700', textTransform: 'uppercase', letterSpacing: '.06em' }}>
-                      MCQ <span style={{ fontWeight: 500, textTransform: 'none' }}>(0–{mcqMax})</span>
+                      {isPrimarySession ? 'Tutorial' : 'MCQ'} <span style={{ fontWeight: 500, textTransform: 'none' }}>(0–{mcqMax})</span>
                       <span style={{ color: '#64748b' }}> Pass:{rowRule.mcqPass}</span>
                     </label>
                     <input
@@ -1509,8 +1691,8 @@ export default function ExamResultView({ classes = [], defaultToEntry = false, r
               outline: 'none',
             }}
             disabled={!!selectedExamSession}
-            onFocus={e => { e.target.style.borderColor='#2563eb'; e.target.style.boxShadow='0 0 0 3px rgba(37,99,235,0.1)'; }}
-            onBlur={e => { e.target.style.borderColor='#bfdbfe'; e.target.style.boxShadow='none'; }}
+            onFocus={e => { e.target.style.borderColor = '#2563eb'; e.target.style.boxShadow = '0 0 0 3px rgba(37,99,235,0.1)'; }}
+            onBlur={e => { e.target.style.borderColor = '#bfdbfe'; e.target.style.boxShadow = 'none'; }}
           >
             <option value="">{t('common.allClasses')}</option>
             {classOptions.map(cls => (
@@ -1548,8 +1730,8 @@ export default function ExamResultView({ classes = [], defaultToEntry = false, r
               fontWeight: '600',
               outline: 'none',
             }}
-            onFocus={e => { e.target.style.borderColor='#2563eb'; e.target.style.boxShadow='0 0 0 3px rgba(37,99,235,0.1)'; }}
-            onBlur={e => { e.target.style.borderColor='#e2e8f0'; e.target.style.boxShadow='none'; }}
+            onFocus={e => { e.target.style.borderColor = '#2563eb'; e.target.style.boxShadow = '0 0 0 3px rgba(37,99,235,0.1)'; }}
+            onBlur={e => { e.target.style.borderColor = '#e2e8f0'; e.target.style.boxShadow = 'none'; }}
           />
         </div>
 
@@ -1582,8 +1764,8 @@ export default function ExamResultView({ classes = [], defaultToEntry = false, r
               outline: 'none',
               opacity: !searchClass ? 0.6 : 1,
             }}
-            onFocus={e => { e.target.style.borderColor='#2563eb'; e.target.style.boxShadow='0 0 0 3px rgba(37,99,235,0.1)'; }}
-            onBlur={e => { e.target.style.borderColor='#bfdbfe'; e.target.style.boxShadow='none'; }}
+            onFocus={e => { e.target.style.borderColor = '#2563eb'; e.target.style.boxShadow = '0 0 0 3px rgba(37,99,235,0.1)'; }}
+            onBlur={e => { e.target.style.borderColor = '#bfdbfe'; e.target.style.boxShadow = 'none'; }}
             disabled={!searchClass}
           >
             <option value="">{t('common.allGroups')}</option>
@@ -1709,7 +1891,7 @@ export default function ExamResultView({ classes = [], defaultToEntry = false, r
                     if (!subject) {
                       return (
                         <td key={subjectName} style={{ padding: '14px 16px', textAlign: 'center' }}>
-                          <span style={{ color: '#cbd5e1', fontWeight: '700', fontSize: '16px' }}>—</span>
+                          <span style={{ color: '#d97706', fontSize: '11px', fontWeight: '700', background: '#fef3c7', padding: '3px 8px', borderRadius: '6px', border: '1px solid #fcd34d' }}>Pending</span>
                         </td>
                       );
                     }
@@ -1858,10 +2040,58 @@ export default function ExamResultView({ classes = [], defaultToEntry = false, r
   const renderStudentDetails = () => {
     if (!selectedStudent) return null;
 
-    const resultSummary = calculateResultSummary(selectedStudent.subjects, selectedStudent.isComplete);
+    const resultSummary = calculateResultSummary(selectedStudent.subjects, selectedStudent.isComplete, selectedStudent);
+    const activeExamName =
+      selectedExamSession?.name ||
+      selectedExamSession?.title ||
+      selectedExamSession?.examName ||
+      selectedExamSession?.term ||
+      (selectedStudent?.subjects?.[0]?.examId && selectedStudent?.subjects?.[0]?.examId !== 'current'
+        ? selectedStudent?.subjects?.[0]?.examId
+        : null) ||
+      'Annual Examination';
+
+    // Construct complete report card subject list including expected subjects that haven't been entered yet (showing Pending)
+    const expectedSubjectNames = getExpectedSubjects(selectedStudent);
+    const enteredSubjectMap = new Map();
+    (selectedStudent.subjects || []).forEach((sub) => {
+      if (sub?.subject) {
+        enteredSubjectMap.set(String(sub.subject).trim().toLowerCase(), sub);
+      }
+    });
+
+    let reportCardSubjectList = [];
+    if (expectedSubjectNames.length > 0) {
+      reportCardSubjectList = expectedSubjectNames.map((expectedSubName) => {
+        const entered = enteredSubjectMap.get(String(expectedSubName).trim().toLowerCase());
+        if (entered) {
+          return {
+            ...entered,
+            isPending: false,
+          };
+        }
+        const rule = selectedExamSession?.subjectRules?.[expectedSubName] || { totalMarks: 100, passMarks: 33 };
+        const resolved = resolveRuleTotals(rule);
+        return {
+          subject: expectedSubName,
+          marks: null,
+          cqMarks: null,
+          mcqMarks: null,
+          status: 'Pending',
+          grade: 'Pending',
+          gradePoint: 0,
+          isPending: true,
+          totalMarks: resolved.totalMarks,
+        };
+      });
+    } else {
+      reportCardSubjectList = (selectedStudent.subjects || []).map((s) => ({ ...s, isPending: false }));
+    }
+
     const studentInfoRows = [
       { label: 'Student Name', value: selectedStudent.name },
       { label: 'Student ID', value: selectedStudent.studentId || 'N/A' },
+      { label: 'Exam Name', value: activeExamName },
       { label: 'Class', value: selectedStudent.class },
       { label: 'Roll Number', value: selectedStudent.roll },
       { label: 'Group / Section', value: selectedStudent.group || 'N/A' },
@@ -1869,6 +2099,19 @@ export default function ExamResultView({ classes = [], defaultToEntry = false, r
       { label: "Father's Name", value: selectedStudent.fatherName || 'N/A' },
       { label: "Mother's Name", value: selectedStudent.motherName || 'N/A' },
     ];
+
+    const activeSchoolLogo =
+      schoolProfile?.logoUrl ||
+      schoolProfile?.logo ||
+      (typeof window !== 'undefined' ? window.localStorage.getItem('schoolLogo') : null) ||
+      null;
+
+    const activeBrandColor =
+      schoolProfile?.themeColor ||
+      schoolProfile?.primaryColor ||
+      schoolProfile?.brandColor ||
+      (typeof window !== 'undefined' ? window.localStorage.getItem('schoolThemeColor') : null) ||
+      '#0284c7';
 
     return (
       <div className="mark-sheet-print-area-wrapper">
@@ -1897,204 +2140,332 @@ export default function ExamResultView({ classes = [], defaultToEntry = false, r
                 <span className="tp-crumb-separator" style={{ color: '#93c5fd' }}>/</span>
                 <span className="tp-crumb-current" style={{ color: '#ffffff' }}>{entryMeta.name || 'Transcript'}</span>
               </div>
-              <span style={{ color: '#dbeafe', fontSize: '13px', fontWeight: '700' }}>Academic Transcript / Mark Sheet</span>
+              <span style={{ color: '#dbeafe', fontSize: '13px', fontWeight: '700' }}>Academic Transcript / Mark Sheet ({activeExamName})</span>
             </div>
           </div>
         </div>
 
-        {/* The Transcript Layout wrapped in PrintContainer */}
+        {/* The Transcript / Report Card Layout wrapped in PrintContainer */}
         <PrintContainer
-          title="Academic Progress Report Card"
+          title={`${activeExamName} — Report Card`}
           subtitle={`Class: ${selectedStudent.class} · Roll No: ${selectedStudent.roll}`}
-          schoolName={getSchoolNameByClass(selectedStudent.class) || schoolProfile.schoolName}
+          schoolName={schoolProfile?.schoolName || getSchoolNameByClass(selectedStudent.class)}
           eiinNumber={schoolProfile?.eiinNumber || window.localStorage.getItem('schoolEiinNumber')}
           location={schoolProfile?.location || window.localStorage.getItem('schoolLocation')}
           singlePageFit={true}
-          signatures={['Class Teacher', 'Guardian Signature', 'Signature of Headteacher']}
+          showWatermark={false}
+          hideDefaultHeader={true}
+          showFooter={false}
         >
-          <div className="transcript-container" style={{ border: 'none', padding: 0 }}>
-            {/* Student Info & Photo (Right-Aligned) */}
-            <div className="transcript-student-section">
-              <div className="transcript-student-grid">
-                {studentInfoRows.map((item) => (
-                  <div key={item.label} className="transcript-info-field">
-                    <span className="transcript-info-label">{item.label}</span>
-                    <span className="transcript-info-value">{item.value}</span>
-                  </div>
-                ))}
-              </div>
+          <div className="transcript-container" style={{ position: 'relative', overflow: 'hidden', padding: '28px 32px', background: '#faf8f5', border: '1px solid #e2e8f0', borderRadius: '12px' }}>
+            {/* Top Red Bar */}
+            <div style={{ position: 'absolute', top: 0, left: 0, right: 0, height: '4px', background: '#ef4444' }} />
 
-              <div className="transcript-photo-box">
-                {selectedStudent.profilePic ? (
-                  <img src={selectedStudent.profilePic} alt={selectedStudent.name} />
-                ) : (
-                  <div className="transcript-photo-placeholder">
-                    <span className="transcript-photo-placeholder-icon">👤</span>
-                    <span>Photo</span>
-                  </div>
-                )}
-              </div>
+            {/* Background School Logo Watermark Layer */}
+            <div
+              aria-hidden="true"
+              style={{
+                position: 'absolute',
+                top: 0,
+                left: 0,
+                right: 0,
+                bottom: 0,
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                pointerEvents: 'none',
+                userSelect: 'none',
+                zIndex: 0,
+              }}
+            >
+              {activeSchoolLogo ? (
+                <img
+                  src={activeSchoolLogo}
+                  alt="School Watermark"
+                  style={{
+                    width: '320px',
+                    height: '320px',
+                    objectFit: 'contain',
+                    opacity: 0.07,
+                  }}
+                  onError={(e) => { e.currentTarget.style.display = 'none'; }}
+                />
+              ) : (
+                <div
+                  style={{
+                    transform: 'rotate(-25deg)',
+                    opacity: 0.04,
+                    fontSize: '32px',
+                    fontWeight: '900',
+                    color: '#1e3a8a',
+                    textAlign: 'center',
+                    lineHeight: '1.8',
+                  }}
+                >
+                  {(schoolProfile?.schoolName || getSchoolNameByClass(selectedStudent.class)).toUpperCase()}
+                </div>
+              )}
             </div>
 
-            {/* Academic Performance Table */}
-            <div className="transcript-table-container">
-              <table className="transcript-performance-table">
-                <thead>
-                  <tr>
-                    <th style={{ width: '40%' }}>Subject</th>
-                    <th style={{ width: '20%' }} className="center-text">Marks</th>
-                    <th style={{ width: '15%' }} className="center-text">Grade</th>
-                    <th style={{ width: '15%' }} className="center-text">Status</th>
-                    <th style={{ width: '10%' }} className="transcript-no-print center-text">Action</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {selectedStudent.subjects.map((subject, idx) => {
-                    const rule     = selectedExamSession?.subjectRules?.[subject.subject] || { totalMarks: 100, passMarks: 33 };
-                    const resolved = resolveRuleTotals(rule);
-                    const hasCqMcqData = subject.cqMarks != null && Number.isFinite(Number(subject.cqMarks));
-                    const hasMcq       = resolved.hasMcq && subject.mcqMarks != null;
-                    const cqFail  = subject.componentStatus?.cqStatus === 'Fail' || (hasCqMcqData && Number(subject.cqMarks) < Number(rule.cqPass));
-                    const mcqFail = hasMcq && (subject.componentStatus?.mcqStatus === 'Fail' || Number(subject.mcqMarks) < Number(rule.mcqPass));
+            <div style={{ position: 'relative', zIndex: 1 }}>
+              {/* Header Section */}
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '14px' }}>
+                {/* Left Header Info */}
+                <div>
+                  <h1 style={{ margin: 0, fontSize: '22px', fontWeight: '800', color: '#1e3a8a', fontFamily: "'Times New Roman', serif", textTransform: 'uppercase', letterSpacing: '-0.3px' }}>
+                    {schoolProfile?.schoolName || getSchoolNameByClass(selectedStudent.class)}
+                  </h1>
+                  {(schoolProfile?.location || window.localStorage.getItem('schoolLocation')) && (
+                    <p style={{ margin: '4px 0 2px', fontSize: '12px', color: '#dc2626', fontWeight: '600', display: 'flex', alignItems: 'center', gap: '4px' }}>
+                      📍 <span style={{ color: '#475569' }}>{schoolProfile?.location || window.localStorage.getItem('schoolLocation')}</span>
+                    </p>
+                  )}
+                  {(schoolProfile?.eiinNumber || window.localStorage.getItem('schoolEiinNumber')) && (
+                    <p style={{ margin: '2px 0 0', fontSize: '12px', fontWeight: '700', color: '#1e293b' }}>
+                      EIIN: {schoolProfile?.eiinNumber || window.localStorage.getItem('schoolEiinNumber')}
+                    </p>
+                  )}
+                </div>
 
-                    return (
-                      <tr key={idx}>
-                        <td style={{ fontWeight: '600' }}>
-                          {subject.subject}
-                          {/* Per-component fail reason pill */}
-                          {(cqFail || mcqFail) && (
-                            <span style={{ marginLeft: 6, fontSize: 10, background: '#fee2e2', color: '#b91c1c', padding: '1px 6px', borderRadius: 6, fontWeight: 800 }}>
-                              {cqFail && mcqFail ? 'CQ+MCQ Fail' : cqFail ? 'CQ Fail' : 'MCQ Fail'}
-                            </span>
-                          )}
-                        </td>
-                        <td className="center-text">
-                          {hasCqMcqData ? (
-                            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 1 }}>
-                              {/* Combined total */}
-                              <span className="marks-main" style={{ color: (cqFail || mcqFail) ? '#b91c1c' : 'inherit' }}>{subject.marks}</span>
-                              <span className="marks-slash">/{resolved.totalMarks}</span>
-                              {/* CQ / MCQ breakdown sub-line */}
-                              <div style={{ fontSize: 10, color: '#64748b', marginTop: 2 }}>
-                                <span style={{ color: cqFail ? '#b91c1c' : '#475569', fontWeight: cqFail ? 700 : 500 }}>
-                                  CQ:{subject.cqMarks}/{rule.cqTotal ?? 70}
-                                </span>
-                                {hasMcq && (
-                                  <span style={{ color: mcqFail ? '#b91c1c' : '#475569', marginLeft: 4, fontWeight: mcqFail ? 700 : 500 }}>
-                                    MCQ:{subject.mcqMarks}/{rule.mcqTotal ?? 30}
-                                  </span>
+                {/* Right Header Document Title */}
+                <div style={{ textAlign: 'right' }}>
+                  <div style={{ fontSize: '13px', fontWeight: '800', color: '#6d28d9', textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: '2px' }}>
+                    {activeExamName}
+                  </div>
+                  <h2 style={{ margin: 0, fontSize: '18px', fontWeight: '800', color: '#1e3a8a', fontFamily: "'Times New Roman', serif", textTransform: 'uppercase', letterSpacing: '0.3px' }}>
+                    ACADEMIC PROGRESS REPORT CARD
+                  </h2>
+                  <p style={{ margin: '4px 0 2px', fontSize: '13px', color: '#334155', fontWeight: '700' }}>
+                    Class: {selectedStudent.class} · Roll No: {selectedStudent.roll}
+                  </p>
+                  <p style={{ margin: '2px 0 0', fontSize: '12px', color: '#64748b', fontWeight: '600' }}>
+                    Date: {new Date().toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })}
+                  </p>
+                </div>
+              </div>
+
+              {/* Horizontal Navy Line */}
+              <div style={{ borderBottom: '2px solid #1e3a8a', marginBottom: '20px' }} />
+
+              {/* Student Details Grid & Photo */}
+              <div className="transcript-student-section" style={{ display: 'grid', gridTemplateColumns: '1fr 115px', gap: '20px', alignItems: 'start', marginBottom: '24px' }}>
+                {/* Left Student Info Fields with dotted borders */}
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
+                  {studentInfoRows.map((info, idx) => (
+                    <div key={idx} className="transcript-info-field" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px dashed #cbd5e1', padding: '5px 0' }}>
+                      <span className="transcript-info-label" style={{ fontSize: '11px', color: '#64748b', fontWeight: '700', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+                        {info.label}
+                      </span>
+                      <span className="transcript-info-value" style={{ fontSize: '13px', color: '#0f172a', fontWeight: '800' }}>
+                        {info.value}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+
+                {/* Right Photo Card */}
+                <div className="transcript-photo-box" style={{ width: '115px', height: '135px', border: '1.5px solid #000', borderRadius: '8px', overflow: 'hidden', background: '#f8fafc', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center' }}>
+                  {selectedStudent.profilePic ? (
+                    <img src={selectedStudent.profilePic} alt="Student" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                  ) : (
+                    <div className="transcript-photo-placeholder" style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', color: '#0284c7' }}>
+                      <svg width="42" height="42" fill="currentColor" viewBox="0 0 24 24">
+                        <path d="M12 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm0 2c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4z" />
+                      </svg>
+                      <span style={{ fontSize: '11px', fontWeight: '800', color: '#64748b', marginTop: '4px', letterSpacing: '0.5px' }}>PHOTO</span>
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* Subject Performance Table */}
+              <div className="transcript-table-container" style={{ width: '100%', marginBottom: '20px', border: '1px solid #bfdbfe', borderRadius: '8px', overflow: 'hidden' }}>
+                <table className="transcript-performance-table" style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left' }}>
+                  <thead>
+                    <tr style={{ background: '#e0ecfb' }}>
+                      <th style={{ padding: '10px 16px', color: '#1e3a8a', fontWeight: '800', fontSize: '12px', textTransform: 'uppercase', letterSpacing: '0.5px', borderBottom: '1px solid #bfdbfe' }}>SUBJECT</th>
+                      <th style={{ padding: '10px 16px', color: '#1e3a8a', fontWeight: '800', fontSize: '12px', textTransform: 'uppercase', letterSpacing: '0.5px', textAlign: 'center', borderBottom: '1px solid #bfdbfe' }}>MARKS</th>
+                      <th style={{ padding: '10px 16px', color: '#1e3a8a', fontWeight: '800', fontSize: '12px', textTransform: 'uppercase', letterSpacing: '0.5px', textAlign: 'center', borderBottom: '1px solid #bfdbfe' }}>HIGHEST</th>
+                      <th style={{ padding: '10px 16px', color: '#1e3a8a', fontWeight: '800', fontSize: '12px', textTransform: 'uppercase', letterSpacing: '0.5px', textAlign: 'center', borderBottom: '1px solid #bfdbfe' }}>GRADE</th>
+                      <th style={{ padding: '10px 16px', color: '#1e3a8a', fontWeight: '800', fontSize: '12px', textTransform: 'uppercase', letterSpacing: '0.5px', textAlign: 'center', borderBottom: '1px solid #bfdbfe' }}>STATUS</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {reportCardSubjectList.map((subject, idx) => {
+                      const rule = selectedExamSession?.subjectRules?.[subject.subject] || { totalMarks: 100, passMarks: 33 };
+                      const resolved = resolveRuleTotals(rule);
+                      const hasCqMcqData = !subject.isPending && subject.cqMarks != null && Number.isFinite(Number(subject.cqMarks));
+                      const hasMcq = resolved.hasMcq && subject.mcqMarks != null;
+                      const highestMark = subject.highestMark ?? subject.highestMarks ?? highestMarksMap[subject.subject] ?? (!subject.isPending ? (subject.marks ?? '—') : '—');
+
+                      return (
+                        <tr key={idx} style={{ borderBottom: '1px solid #e2e8f0' }}>
+                          <td style={{ padding: '10px 16px', fontSize: '13.5px', fontWeight: '700', color: '#1e293b' }}>
+                            {subject.subject}
+                          </td>
+                          <td style={{ padding: '10px 16px', textAlign: 'center' }}>
+                            {subject.isPending ? (
+                              <span style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', fontSize: '13px', color: '#94a3b8', fontWeight: '700' }}>
+                                — <span style={{ fontSize: '10px', background: '#fef3c7', color: '#d97706', padding: '1px 6px', borderRadius: '4px', border: '1px solid #fcd34d', fontWeight: '800' }}>Pending</span>
+                              </span>
+                            ) : (
+                              <>
+                                <div>
+                                  <span style={{ fontSize: '15px', fontWeight: '800', color: '#1d4ed8' }}>{subject.marks}</span>
+                                  <span style={{ fontSize: '12px', color: '#94a3b8', fontWeight: '600', marginLeft: '2px' }}>/{resolved.totalMarks}</span>
+                                </div>
+                                {hasCqMcqData && (
+                                  <div style={{ fontSize: '11px', color: '#64748b', fontWeight: '600', marginTop: '2px' }}>
+                                    CQ:{subject.cqMarks}/{rule.cqTotal ?? 70}
+                                    {hasMcq && ` MCQ:${subject.mcqMarks}/${rule.mcqTotal ?? 30}`}
+                                  </div>
                                 )}
-                              </div>
-                            </div>
-                          ) : (
-                            <>
-                              <span className="marks-main">{subject.marks}</span>
-                              <span className="marks-slash">/{resolved.totalMarks}</span>
-                            </>
-                          )}
-                        </td>
-                        <td className="center-text">
-                          <GradeBadge grade={subject.grade} />
-                        </td>
-                        <td className="center-text">
-                          {subject.status === 'Pass' ? (
-                            <span className="badge-pass">Pass</span>
-                          ) : (
-                            <span className="badge-fail">Fail</span>
-                          )}
-                        </td>
-                        <td className="transcript-no-print center-text">
-                          {!readOnly && subject.resultKey ? (
-                            <div className="action-buttons">
-                              <button
-                                type="button"
-                                onClick={() => handleEditResult(subject.resultKey, subject.resultSource)}
-                                className="btn-edit"
-                              >
-                                ✏️ Edit
-                              </button>
-                              <button
-                                type="button"
-                                onClick={() => handleDeleteResult(subject.resultKey, subject.resultSource)}
-                                className="btn-delete"
-                              >
-                                🗑 Delete
-                              </button>
-                            </div>
-                          ) : (
-                            <span style={{ color: '#cbd5e1' }}>—</span>
-                          )}
-                        </td>
-                      </tr>
-                    );
-                  })}
-                  {/* Grand Total Row */}
-                  <tr className="transcript-grand-total-row">
-                    <td><strong>Grand Total</strong></td>
-                    <td className="center-text">
-                      <strong>{resultSummary.totalMarks}</strong>
-                      <span className="marks-slash">/{resultSummary.maxMarks}</span>
-                    </td>
-                    <td colSpan={2}></td>
-                    <td className="transcript-no-print"></td>
-                  </tr>
-                </tbody>
-              </table>
-            </div>
+                              </>
+                            )}
+                          </td>
+                          <td style={{ padding: '10px 16px', textAlign: 'center' }}>
+                            <span style={{ fontSize: '14px', fontWeight: '800', color: '#0f172a' }}>
+                              {highestMark}
+                            </span>
+                          </td>
+                          <td style={{ padding: '10px 16px', textAlign: 'center' }}>
+                            {subject.isPending ? (
+                              <span style={{ display: 'inline-block', padding: '4px 10px', borderRadius: '6px', background: '#f1f5f9', color: '#94a3b8', fontSize: '12px', fontWeight: '700' }}>
+                                —
+                              </span>
+                            ) : (
+                              <span style={{ display: 'inline-block', padding: '4px 14px', borderRadius: '6px', background: '#6d28d9', color: '#fff', fontSize: '13px', fontWeight: '800', minWidth: '36px', textAlign: 'center' }}>
+                                {subject.grade}
+                              </span>
+                            )}
+                          </td>
+                          <td style={{ padding: '10px 16px', textAlign: 'center' }}>
+                            {subject.isPending ? (
+                              <span style={{
+                                display: 'inline-block',
+                                padding: '4px 16px',
+                                borderRadius: '20px',
+                                background: '#fef3c7',
+                                color: '#d97706',
+                                border: '1px solid #fcd34d',
+                                fontSize: '12px',
+                                fontWeight: '700',
+                              }}>
+                                Pending
+                              </span>
+                            ) : (
+                              <span style={{
+                                display: 'inline-block',
+                                padding: '4px 16px',
+                                borderRadius: '20px',
+                                background: subject.status === 'Fail' ? '#fee2e2' : '#dcfce7',
+                                color: subject.status === 'Fail' ? '#b91c1c' : '#15803d',
+                                border: subject.status === 'Fail' ? '1px solid #fca5a5' : '1px solid #86efac',
+                                fontSize: '12px',
+                                fontWeight: '700',
+                              }}>
+                                {subject.status}
+                              </span>
+                            )}
+                          </td>
+                        </tr>
+                      );
+                    })}
 
-            {/* Summary Table */}
-            <div className="transcript-summary-grid">
-              <div className="transcript-summary-cell">
-                <div className="transcript-summary-label">Percentage</div>
-                <div className="transcript-summary-value">
-                  {selectedStudent.isComplete ? `${resultSummary.percentage.toFixed(1)}%` : 'N/A'}
+                    {/* Grand Total Footer Row */}
+                    <tr className="transcript-grand-total-row" style={{ background: '#ffffff', borderTop: '2px solid #0f172a' }}>
+                      <td style={{ padding: '12px 16px', fontWeight: '800', fontSize: '14px', color: '#0f172a' }}>
+                        Grand Total
+                      </td>
+                      <td style={{ padding: '12px 16px', textAlign: 'center', fontWeight: '800', fontSize: '15px', color: '#0f172a' }}>
+                        {resultSummary.totalMarks} <span style={{ fontSize: '12px', color: '#64748b', fontWeight: '500' }}>/{resultSummary.maxMarks}</span>
+                      </td>
+                      <td style={{ padding: '12px 16px', textAlign: 'center', fontWeight: '800', fontSize: '14px', color: '#0f172a' }}>
+                        {classHighestTotalMarks ?? '—'}
+                      </td>
+                      <td style={{ padding: '12px 16px' }} />
+                      <td style={{ padding: '12px 16px' }} />
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+
+              {/* 4 Summary Metric Cards */}
+              <div className="transcript-summary-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', border: '1px solid #cbd5e1', borderRadius: '8px', background: '#ffffff', overflow: 'hidden', textAlign: 'center', marginBottom: '24px' }}>
+                <div className="transcript-summary-cell" style={{ padding: '12px', borderRight: '1px solid #cbd5e1' }}>
+                  <div className="transcript-summary-label" style={{ fontSize: '10px', fontWeight: '700', color: '#64748b', textTransform: 'uppercase', marginBottom: '4px', letterSpacing: '0.5px' }}>
+                    PERCENTAGE
+                  </div>
+                  <div className="transcript-summary-value" style={{ fontSize: '16px', fontWeight: '800', color: '#0f172a' }}>
+                    {resultSummary.percentage.toFixed(1)}%
+                  </div>
+                </div>
+
+                <div className="transcript-summary-cell" style={{ padding: '12px', borderRight: '1px solid #cbd5e1' }}>
+                  <div className="transcript-summary-label" style={{ fontSize: '10px', fontWeight: '700', color: '#64748b', textTransform: 'uppercase', marginBottom: '4px', letterSpacing: '0.5px' }}>
+                    PROFICIENCY
+                  </div>
+                  <div className="transcript-summary-value" style={{ fontSize: '16px', fontWeight: '800', color: '#0f172a' }}>
+                    {!selectedStudent.isComplete ? 'Result Pending' : (resultSummary.status === 'Fail' ? 'Needs Improvement' : (resultSummary.proficiency || 'Outstanding'))}
+                  </div>
+                </div>
+
+                <div className="transcript-summary-cell" style={{ padding: '12px', borderRight: '1px solid #cbd5e1' }}>
+                  <div className="transcript-summary-label" style={{ fontSize: '10px', fontWeight: '700', color: '#64748b', textTransform: 'uppercase', marginBottom: '4px', letterSpacing: '0.5px' }}>
+                    GRADE (GPA)
+                  </div>
+                  <div className="transcript-summary-value" style={{ fontSize: '16px', fontWeight: '800', color: '#0f172a' }}>
+                    {!selectedStudent.isComplete ? 'Pending' : (resultSummary.status === 'Fail' ? 'F (0.00)' : `${resultSummary.averageGrade} (${resultSummary.gradePoint.toFixed(2)})`)}
+                  </div>
+                </div>
+
+                <div className="transcript-summary-cell" style={{ padding: '12px' }}>
+                  <div className="transcript-summary-label" style={{ fontSize: '10px', fontWeight: '700', color: '#64748b', textTransform: 'uppercase', marginBottom: '4px', letterSpacing: '0.5px' }}>
+                    CLASS RANK
+                  </div>
+                  <div className="transcript-summary-value" style={{ fontSize: '16px', fontWeight: '800', color: '#0f172a' }}>
+                    {!selectedStudent.isComplete ? 'N/A' : (selectedStudent.position ? `#${selectedStudent.position}` : 'N/A')}
+                  </div>
                 </div>
               </div>
-              <div className="transcript-summary-cell">
-                <div className="transcript-summary-label">Proficiency</div>
-                <div className="transcript-summary-value">
-                  {selectedStudent.isComplete ? (
-                    resultSummary.status === 'Fail' ? (
-                      <span className="badge-fail">Fail</span>
-                    ) : (
-                      resultSummary.proficiency
-                    )
-                  ) : (
-                    <span className="badge-fail" style={{ background: '#fef3c7', color: '#d97706', border: '1px solid #fcd34d' }}>Pending</span>
-                  )}
+
+              {/* Bottom Signatures Section */}
+              <div
+                className="transcript-footer"
+                style={{
+                  display: 'grid',
+                  gridTemplateColumns: 'repeat(3, 1fr)',
+                  gap: '24px',
+                  alignItems: 'end',
+                  marginTop: '36px',
+                  paddingTop: '10px',
+                }}
+              >
+                {/* Column 1: Class Teacher */}
+                <div className="transcript-signature-col" style={{ display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
+                  <div style={{ height: '36px' }} />
+                  <div className="transcript-signature-line" style={{ width: '100%', borderTop: '1.5px solid #475569', marginBottom: '6px' }} />
+                  <span className="transcript-signature-label" style={{ fontSize: '11.5px', fontWeight: '700', color: '#334155', textTransform: 'uppercase', letterSpacing: '0.3px', textAlign: 'center' }}>
+                    Class Teacher
+                  </span>
                 </div>
-              </div>
-              <div className="transcript-summary-cell">
-                <div className="transcript-summary-label">Grade (GPA)</div>
-                <div className="transcript-summary-value">
-                  {selectedStudent.isComplete ? (
-                    resultSummary.status === 'Fail' ? (
-                      <span style={{ color: '#dc2626', fontWeight: '800' }}>F (0.00)</span>
-                    ) : (
-                      `${resultSummary.averageGrade} (${resultSummary.gradePoint.toFixed(2)})`
-                    )
-                  ) : (
-                    <span style={{ color: '#dc2626', fontWeight: '800' }}>F (0.00)</span>
-                  )}
+
+                {/* Column 2: Guardian */}
+                <div className="transcript-signature-col" style={{ display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
+                  <div style={{ height: '36px' }} />
+                  <div className="transcript-signature-line" style={{ width: '100%', borderTop: '1.5px solid #475569', marginBottom: '6px' }} />
+                  <span className="transcript-signature-label" style={{ fontSize: '11.5px', fontWeight: '700', color: '#334155', textTransform: 'uppercase', letterSpacing: '0.3px', textAlign: 'center' }}>
+                    Guardian
+                  </span>
                 </div>
-              </div>
-              <div className="transcript-summary-cell">
-                <div className="transcript-summary-label">Class Rank</div>
-                <div className="transcript-summary-value">
-                  {selectedStudent.position ? (
-                    `#${selectedStudent.position}`
-                  ) : (
-                    <span style={{
-                      display: 'inline-block',
-                      padding: '2px 8px',
-                      borderRadius: '8px',
-                      background: '#e2e8f0',
-                      color: '#475569',
-                      fontSize: '11px',
-                      fontWeight: '700',
-                      border: '1px solid #cbd5e1'
-                    }}>Not Ranked</span>
-                  )}
+
+                {/* Column 3: Head Teacher */}
+                <div className="transcript-signature-col" style={{ display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
+                  <div style={{ height: '36px' }} />
+                  <div className="transcript-signature-line" style={{ width: '100%', borderTop: '1.5px solid #475569', marginBottom: '6px' }} />
+                  <span className="transcript-signature-label" style={{ fontSize: '11.5px', fontWeight: '700', color: '#334155', textTransform: 'uppercase', letterSpacing: '0.3px', textAlign: 'center' }}>
+                    Head Teacher
+                  </span>
                 </div>
               </div>
             </div>
@@ -2169,14 +2540,36 @@ export default function ExamResultView({ classes = [], defaultToEntry = false, r
         classes={classes}
         onClose={() => setShowConfigModal(false)}
         onSave={async (newExam) => {
+          const createdExam = { ...newExam, key: newExam.examId };
           try {
-            await saveExamSession(newExam);
-            showAlert('Exam Session configured successfully!', 'Success', 'success');
-            setShowConfigModal(false);
+            await ensureFirebaseAuth();
+            await saveExamSession(newExam, activeSchoolId);
           } catch (err) {
-            console.error('Failed to configure exam session:', err);
-            showAlert('Failed to configure exam session. Check console.', 'Error', 'error');
+            console.warn('Firestore write warning (exam configured locally):', err?.message || err);
           }
+
+          setExamSessions((prev) => {
+            const next = [...prev.filter((e) => (e.examId || e.id || e.key) !== newExam.examId), createdExam];
+            saveStoredExamSessions(next, activeSchoolId);
+            return next;
+          });
+
+          setDeletedExamKeys((prev) => {
+            const next = prev.filter((k) =>
+              k !== newExam.examId &&
+              k !== `${newExam.examId}::${newExam.targetClass}` &&
+              k !== `${newExam.name}::${newExam.targetClass}`
+            );
+            if (typeof window !== 'undefined' && window.localStorage) {
+              const storageKey = activeSchoolId ? `progga_deleted_exams_${activeSchoolId}` : 'progga_deleted_exams';
+              window.localStorage.setItem(storageKey, JSON.stringify(next));
+            }
+            return next;
+          });
+
+          setSelectedExamSession(createdExam);
+          showAlert('Exam Session configured successfully!', 'Success', 'success');
+          setShowConfigModal(false);
         }}
       />
     );
@@ -2208,7 +2601,7 @@ export default function ExamResultView({ classes = [], defaultToEntry = false, r
               </button>
             )}
           </div>
-          
+
           {examsWithResults.length === 0 ? (
             <div style={{ background: '#fff', padding: '40px', borderRadius: '16px', border: '1.5px solid #e2e8f0', textAlign: 'center' }}>
               <span style={{ fontSize: '48px', display: 'block', marginBottom: '12px' }}>📭</span>
@@ -2224,7 +2617,7 @@ export default function ExamResultView({ classes = [], defaultToEntry = false, r
                 const branch = SCHOOL_BRANCHES[branchKey];
                 // Exams belonging to this branch
                 const branchExams = examsWithResults.filter(
-                  (exam) => getBranchKeyByClass(exam.targetClass) === branchKey
+                  (exam) => (exam.branchKey || getBranchKeyByClass(exam.targetClass || exam)) === branchKey
                 );
                 // Per-branch aggregate: unique students with results
                 const branchStudentSet = new Set();
@@ -2354,7 +2747,7 @@ export default function ExamResultView({ classes = [], defaultToEntry = false, r
             <h3 style={{ margin: '0 0 16px 0', fontSize: '17px', fontWeight: '800', color: '#1a2e4a' }}>
               ⚙️ Active Exam Configurations
             </h3>
-            
+
             {examSessions.length === 0 ? (
               <div style={{ background: '#f8fafc', padding: '24px', borderRadius: '16px', border: '1.5px dashed #cbd5e1', textAlign: 'center' }}>
                 <p style={{ margin: 0, fontSize: '13px', color: '#64748b', fontWeight: '600' }}>
@@ -2383,14 +2776,15 @@ export default function ExamResultView({ classes = [], defaultToEntry = false, r
                               {Object.entries(exam.subjectRules).map(([sub, rule]) => {
                                 // Detect CQ/MCQ rule vs legacy
                                 const isCqMcq = rule.cqTotal != null;
-                                const hasMcq  = isCqMcq && rule.hasMcq !== false && rule.mcqTotal > 0;
+                                const hasMcq = isCqMcq && rule.hasMcq !== false && rule.mcqTotal > 0;
+                                const isPrimaryExam = exam.branchKey === 'primary' || getBranchKeyByClass(exam.targetClass) === 'primary';
                                 return (
                                   <span key={sub} style={{ background: '#eff6ff', color: '#1e40af', border: '1px solid #bfdbfe', padding: '3px 8px', borderRadius: '6px', fontSize: '11px', fontWeight: '600' }}>
                                     {sub}{' '}
                                     {isCqMcq ? (
                                       <span style={{ color: '#475569' }}>
                                         CQ:{rule.cqTotal}/p{rule.cqPass}
-                                        {hasMcq ? ` MCQ:${rule.mcqTotal}/p${rule.mcqPass}` : ' (CQ only)'}
+                                        {hasMcq ? ` ${isPrimaryExam ? 'Tut' : 'MCQ'}:${rule.mcqTotal}/p${rule.mcqPass}` : ' (CQ only)'}
                                       </span>
                                     ) : (
                                       <span style={{ color: '#475569' }}>({rule.totalMarks}/{rule.passMarks})</span>
@@ -2573,9 +2967,13 @@ export default function ExamResultView({ classes = [], defaultToEntry = false, r
    ConfigureExamModal Component
    ───────────────────────────────────────────────────────────── */
 function ConfigureExamModal({ classes = [], onClose, onSave }) {
+  const { showAlert } = useAlert();
   const [selectedBranch, setSelectedBranch] = useState('primary');
   const [name, setName] = useState('');
-  
+  const [targetGroup, setTargetGroup] = useState('All');
+  const [customSubjects, setCustomSubjects] = useState([]);
+  const [newSubjectInput, setNewSubjectInput] = useState('');
+
   // Filter classOptions dynamically based on selectedBranch
   const filteredClassOptions = useMemo(() => {
     return classes
@@ -2595,55 +2993,144 @@ function ConfigureExamModal({ classes = [], onClose, onSave }) {
     }
   }, [filteredClassOptions]);
 
-  const [rules, setRules] = useState({});
+  const classObj = useMemo(() => {
+    return (classes || []).find(c => c.className === targetClass) || null;
+  }, [classes, targetClass]);
 
-  const classSubjects = useMemo(() => {
-    const fallback = Array.isArray(DEFAULT_SUBJECTS) ? DEFAULT_SUBJECTS : ['Mathematics', 'English', 'Science'];
-    if (!targetClass) return fallback;
-    const classObj = classes.find(c => c.className === targetClass);
-    if (!classObj) return fallback;
-    
-    const subjects = new Set();
+  const availableGroups = useMemo(() => {
+    if (!classObj) return [];
+    const grpSet = new Set();
+    if (Array.isArray(classObj.groups) && classObj.groups.length > 0) {
+      classObj.groups.forEach(g => g && grpSet.add(String(g).trim()));
+    }
     if (classObj.groupSubjects) {
-      try {
-        Object.values(classObj.groupSubjects).forEach(subList => {
-          if (Array.isArray(subList)) {
-            subList.forEach(s => {
-              if (s) subjects.add(String(s).trim());
-            });
-          }
-        });
-      } catch (err) {
-        console.warn('Error extracting class subjects:', err);
-      }
+      Object.keys(classObj.groupSubjects).forEach(g => g && grpSet.add(String(g).trim()));
     }
-    
-    if (subjects.size === 0) {
-      fallback.forEach(s => subjects.add(s));
-    }
-    return [...subjects].filter(Boolean);
-  }, [targetClass, classes]);
+    return Array.from(grpSet);
+  }, [classObj]);
 
   useEffect(() => {
-    const initialRules = {};
-    (classSubjects || []).forEach(sub => {
-      if (sub) {
-        initialRules[sub] = { cqTotal: 70, cqPass: 23, mcqTotal: 30, mcqPass: 10, hasMcq: true };
+    if (availableGroups.length > 0) {
+      if (!targetGroup || (targetGroup !== 'All' && !availableGroups.includes(targetGroup))) {
+        setTargetGroup(availableGroups[0]);
       }
+    } else {
+      setTargetGroup('General');
+    }
+    setCustomSubjects([]);
+  }, [targetClass, availableGroups]);
+
+  // Extract actual assigned subjects for targetClass & targetGroup
+  const assignedSubjects = useMemo(() => {
+    if (!targetClass || !classObj) return [];
+
+    let subList = [];
+    if (classObj.groupSubjects) {
+      if (targetGroup && targetGroup !== 'All' && Array.isArray(classObj.groupSubjects[targetGroup])) {
+        subList = classObj.groupSubjects[targetGroup];
+      } else {
+        const merged = new Set();
+        Object.values(classObj.groupSubjects).forEach(list => {
+          if (Array.isArray(list)) list.forEach(s => s && merged.add(String(s).trim()));
+        });
+        subList = Array.from(merged);
+      }
+    }
+
+    // Fallback to LocalStorage teacherPanelGroupSubjects if classObj.groupSubjects was empty
+    if ((!subList || subList.length === 0) && typeof window !== 'undefined' && window.localStorage) {
+      try {
+        const rawStorage = window.localStorage.getItem('teacherPanelGroupSubjects');
+        if (rawStorage) {
+          const parsed = JSON.parse(rawStorage);
+          const classIdx = (classes || []).findIndex(c => c.className === targetClass);
+          const groupMap = parsed[classIdx] || parsed[targetClass] || parsed[String(classIdx)];
+          if (groupMap) {
+            if (targetGroup && targetGroup !== 'All' && Array.isArray(groupMap[targetGroup])) {
+              subList = groupMap[targetGroup];
+            } else {
+              const merged = new Set();
+              Object.values(groupMap).forEach(list => {
+                if (Array.isArray(list)) list.forEach(s => s && merged.add(String(s).trim()));
+              });
+              subList = Array.from(merged);
+            }
+          }
+        }
+      } catch (err) {
+        console.warn('Error reading stored group subjects:', err);
+      }
+    }
+
+    if ((!subList || subList.length === 0) && Array.isArray(classObj.subjects)) {
+      subList = classObj.subjects;
+    }
+
+    return Array.from(new Set((subList || []).map(s => String(s || '').trim()).filter(Boolean)));
+  }, [targetClass, targetGroup, classObj, classes]);
+
+  const modalSubjects = useMemo(() => {
+    return Array.from(new Set([...assignedSubjects, ...customSubjects]));
+  }, [assignedSubjects, customSubjects]);
+
+  const [rules, setRules] = useState({});
+
+  useEffect(() => {
+    setRules(prev => {
+      const updated = {};
+      (modalSubjects || []).forEach(sub => {
+        if (sub) {
+          updated[sub] = prev[sub] || {
+            included: true,
+            cqTotal: 70,
+            cqPass: 23,
+            mcqTotal: 30,
+            mcqPass: 10,
+            hasMcq: true,
+          };
+        }
+      });
+      return updated;
     });
-    setRules(initialRules);
-  }, [classSubjects]);
+  }, [modalSubjects]);
 
   const handleRuleChange = (subject, field, value) => {
-    // hasMcq is a boolean field toggled via checkbox (value '1'=true, '0'=false)
-    const coerced = field === 'hasMcq' ? value === '1' || value === true : (parseInt(value, 10) || 0);
+    const coerced = field === 'hasMcq' || field === 'included'
+      ? value === '1' || value === true
+      : (parseInt(value, 10) || 0);
+
     setRules(prev => ({
       ...prev,
       [subject]: {
-        ...prev[subject],
-        [field]: coerced
-      }
+        ...(prev[subject] || { included: true, cqTotal: 70, cqPass: 23, mcqTotal: 30, mcqPass: 10, hasMcq: true }),
+        [field]: coerced,
+      },
     }));
+  };
+
+  const handleAddCustomSubject = (e) => {
+    e.preventDefault();
+    const trimmed = newSubjectInput.trim();
+    if (!trimmed) return;
+    if (modalSubjects.map(s => s.toLowerCase()).includes(trimmed.toLowerCase())) {
+      showAlert(`Subject "${trimmed}" is already in the list.`, 'Duplicate Subject', 'warning');
+      return;
+    }
+    setCustomSubjects(prev => [...prev, trimmed]);
+    setRules(prev => ({
+      ...prev,
+      [trimmed]: { included: true, cqTotal: 70, cqPass: 23, mcqTotal: 30, mcqPass: 10, hasMcq: true },
+    }));
+    setNewSubjectInput('');
+  };
+
+  const handleRemoveCustomSubject = (sub) => {
+    setCustomSubjects(prev => prev.filter(s => s !== sub));
+    setRules(prev => {
+      const next = { ...prev };
+      delete next[sub];
+      return next;
+    });
   };
 
   const handleSubmit = (e) => {
@@ -2657,16 +3144,32 @@ function ConfigureExamModal({ classes = [], onClose, onSave }) {
       return;
     }
 
-    // Validate each subject's component rules
+    const isPrimaryBranch = selectedBranch === 'primary';
+    const activeRules = {};
+
     for (const [sub, rule] of Object.entries(rules)) {
-      if (Number(rule.cqPass) > Number(rule.cqTotal)) {
-        showAlert(`"${sub}": CQ Pass marks (${rule.cqPass}) cannot exceed CQ Total (${rule.cqTotal}).`, 'Validation Error', 'warning');
-        return;
+      if (rule && rule.included !== false) {
+        if (Number(rule.cqPass) > Number(rule.cqTotal)) {
+          showAlert(`"${sub}": CQ Pass marks (${rule.cqPass}) cannot exceed CQ Total (${rule.cqTotal}).`, 'Validation Error', 'warning');
+          return;
+        }
+        if (rule.hasMcq && Number(rule.mcqPass) > Number(rule.mcqTotal)) {
+          showAlert(`"${sub}": ${isPrimaryBranch ? 'Tutorial' : 'MCQ'} Pass marks (${rule.mcqPass}) cannot exceed ${isPrimaryBranch ? 'Tutorial' : 'MCQ'} Total (${rule.mcqTotal}).`, 'Validation Error', 'warning');
+          return;
+        }
+        activeRules[sub] = {
+          cqTotal: Number(rule.cqTotal) || 0,
+          cqPass: Number(rule.cqPass) || 0,
+          mcqTotal: rule.hasMcq ? (Number(rule.mcqTotal) || 0) : 0,
+          mcqPass: rule.hasMcq ? (Number(rule.mcqPass) || 0) : 0,
+          hasMcq: rule.hasMcq !== false,
+        };
       }
-      if (rule.hasMcq && Number(rule.mcqPass) > Number(rule.mcqTotal)) {
-        showAlert(`"${sub}": MCQ Pass marks (${rule.mcqPass}) cannot exceed MCQ Total (${rule.mcqTotal}).`, 'Validation Error', 'warning');
-        return;
-      }
+    }
+
+    if (Object.keys(activeRules).length === 0) {
+      showAlert('Please select or add at least one active subject for this exam.', 'Validation Error', 'warning');
+      return;
     }
 
     const sanitizeForId = (str) => {
@@ -2678,20 +3181,21 @@ function ConfigureExamModal({ classes = [], onClose, onSave }) {
         .replace(/^-+|-+$/g, '');
     };
 
-    const examId = `${sanitizeForId(name)}-${selectedBranch}-${sanitizeForId(targetClass)}`;
+    const examId = `${sanitizeForId(name)}-${selectedBranch}-${sanitizeForId(targetClass)}${targetGroup ? `-${sanitizeForId(targetGroup)}` : ''}`;
 
     onSave({
       examId,
       branchKey: selectedBranch,
       name: name.trim(),
       targetClass,
-      subjectRules: rules,
+      targetGroup: targetGroup || 'General',
+      subjectRules: activeRules,
     });
   };
 
   return (
     <div className="tp-modal-overlay" onClick={onClose}>
-      <div className="tp-modal" onClick={e => e.stopPropagation()} style={{ maxWidth: '760px' }}>
+      <div className="tp-modal" onClick={e => e.stopPropagation()} style={{ maxWidth: '780px' }}>
         <div className="tp-modal-header" style={{ borderBottomColor: '#8b5cf6' }}>
           <h3 className="tp-modal-title">⚙️ Configure New Exam Session</h3>
           <button className="tp-modal-close" onClick={onClose}>✕</button>
@@ -2744,112 +3248,219 @@ function ConfigureExamModal({ classes = [], onClose, onSave }) {
             </div>
           </div>
 
-          {/* ── CQ / MCQ Subject Rules Grid ───────────────────────────── */}
+          {/* Group / Track Selection */}
+          <div className="tp-form-group" style={{ marginTop: '16px' }}>
+            <label className="tp-form-label">Target Group / Section *</label>
+            <select
+              className="tp-form-input"
+              value={targetGroup}
+              onChange={e => setTargetGroup(e.target.value)}
+              style={{ width: '100%' }}
+            >
+              {availableGroups.length > 0 ? (
+                <>
+                  <option value="All">All Groups (Combined)</option>
+                  {availableGroups.map(grp => (
+                    <option key={grp} value={grp}>{grp}</option>
+                  ))}
+                </>
+              ) : (
+                <option value="General">General</option>
+              )}
+            </select>
+          </div>
+
+          {/* ── Assigned Class Subjects Grid ───────────────────────────── */}
           <div style={{ marginTop: '20px' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end', marginBottom: 10 }}>
               <div>
-                <h4 style={{ margin: '0 0 4px', fontSize: '14px', color: '#1a2e4a', fontWeight: '800' }}>📚 Subject Rules Grid (CQ / MCQ)</h4>
+                <h4 style={{ margin: '0 0 4px', fontSize: '14px', color: '#1a2e4a', fontWeight: '800' }}>
+                  📚 Class Assigned Subjects ({assignedSubjects.length} Found)
+                </h4>
                 <p style={{ margin: 0, fontSize: '12px', color: '#64748b' }}>
-                  Set independent CQ and MCQ totals &amp; pass marks. Toggle MCQ off for CQ-only subjects.
+                  Showing assigned subjects for <strong>{targetClass || 'Selected Class'}</strong> {targetGroup && targetGroup !== 'All' ? `(${targetGroup})` : ''}.
                 </p>
               </div>
-              {/* Legend */}
               <div style={{ fontSize: 11, color: '#64748b', textAlign: 'right', lineHeight: 1.6 }}>
                 <div><span style={{ color: '#2563eb', fontWeight: 700 }}>CQ</span> = Creative Questions</div>
-                <div><span style={{ color: '#7c3aed', fontWeight: 700 }}>MCQ</span> = Multiple Choice Qs</div>
+                <div><span style={{ color: '#7c3aed', fontWeight: 700 }}>{selectedBranch === 'primary' ? 'Tutorial' : 'MCQ'}</span> = {selectedBranch === 'primary' ? 'Tutorial Marks' : 'Multiple Choice Qs'}</div>
               </div>
             </div>
-            <div style={{ maxHeight: '320px', overflowY: 'auto', overflowX: 'auto', WebkitOverflowScrolling: 'touch', border: '1px solid #e2e8f0', borderRadius: '10px', background: '#f8fafc' }}>
+
+            {/* If no assigned subjects found for this class/group */}
+            {assignedSubjects.length === 0 && (
+              <div style={{
+                background: '#fffbebf0',
+                border: '1.5px dashed #fcd34d',
+                borderRadius: '10px',
+                padding: '14px 16px',
+                marginBottom: '14px',
+                fontSize: '13px',
+                color: '#92400e',
+              }}>
+                <strong>⚠️ No subjects assigned to {targetClass || 'this class'} ({targetGroup || 'General'}) yet.</strong>
+                <p style={{ margin: '4px 0 0', fontSize: '12px', color: '#b45309' }}>
+                  Please assign subjects for this class/group in <strong>Class / Subject Management</strong>, or add subjects manually using the input below.
+                </p>
+              </div>
+            )}
+
+            {/* Quick Add Custom Subject input */}
+            <div style={{ display: 'flex', gap: '8px', marginBottom: '12px' }}>
+              <input
+                type="text"
+                className="tp-form-input"
+                placeholder="+ Add extra subject name (e.g. Higher Math)"
+                value={newSubjectInput}
+                onChange={e => setNewSubjectInput(e.target.value)}
+                style={{ flex: 1, fontSize: '13px' }}
+              />
+              <button
+                type="button"
+                onClick={handleAddCustomSubject}
+                style={{
+                  padding: '8px 16px',
+                  borderRadius: '8px',
+                  border: 'none',
+                  background: '#2563eb',
+                  color: '#fff',
+                  fontWeight: '700',
+                  fontSize: '13px',
+                  cursor: 'pointer',
+                }}
+              >
+                Add Subject
+              </button>
+            </div>
+
+            {/* Subject Grid Table */}
+            <div style={{ maxHeight: '300px', overflowY: 'auto', overflowX: 'auto', WebkitOverflowScrolling: 'touch', border: '1px solid #e2e8f0', borderRadius: '10px', background: '#f8fafc' }}>
               <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
                 <thead>
                   <tr style={{ background: '#eff6ff', borderBottom: '1.5px solid #bfdbfe' }}>
-                    <th style={{ padding: '10px 14px', textAlign: 'left', fontSize: '11px', fontWeight: '700', color: '#1d4ed8', textTransform: 'uppercase', minWidth: 100 }}>Subject</th>
-                    {/* CQ columns */}
+                    <th style={{ padding: '10px 10px', textAlign: 'center', fontSize: '11px', fontWeight: '700', color: '#1d4ed8', width: 45 }}>Use</th>
+                    <th style={{ padding: '10px 14px', textAlign: 'left', fontSize: '11px', fontWeight: '700', color: '#1d4ed8', textTransform: 'uppercase', minWidth: 120 }}>Subject Name</th>
                     <th style={{ padding: '10px 8px', textAlign: 'center', fontSize: '11px', fontWeight: '700', color: '#2563eb', textTransform: 'uppercase', width: 90 }}>CQ Total</th>
                     <th style={{ padding: '10px 8px', textAlign: 'center', fontSize: '11px', fontWeight: '700', color: '#2563eb', textTransform: 'uppercase', width: 90 }}>CQ Pass</th>
-                    {/* MCQ columns */}
-                    <th style={{ padding: '10px 8px', textAlign: 'center', fontSize: '11px', fontWeight: '700', color: '#7c3aed', textTransform: 'uppercase', width: 80 }}>MCQ?</th>
-                    <th style={{ padding: '10px 8px', textAlign: 'center', fontSize: '11px', fontWeight: '700', color: '#7c3aed', textTransform: 'uppercase', width: 90 }}>MCQ Total</th>
-                    <th style={{ padding: '10px 8px', textAlign: 'center', fontSize: '11px', fontWeight: '700', color: '#7c3aed', textTransform: 'uppercase', width: 90 }}>MCQ Pass</th>
-                    {/* Combined */}
-                    <th style={{ padding: '10px 8px', textAlign: 'center', fontSize: '11px', fontWeight: '700', color: '#475569', textTransform: 'uppercase', width: 80 }}>Combined</th>
+                    <th style={{ padding: '10px 8px', textAlign: 'center', fontSize: '11px', fontWeight: '700', color: '#7c3aed', textTransform: 'uppercase', width: 80 }}>{selectedBranch === 'primary' ? 'Tutorial?' : 'MCQ?'}</th>
+                    <th style={{ padding: '10px 8px', textAlign: 'center', fontSize: '11px', fontWeight: '700', color: '#7c3aed', textTransform: 'uppercase', width: 90 }}>{selectedBranch === 'primary' ? 'Tutorial Total' : 'MCQ Total'}</th>
+                    <th style={{ padding: '10px 8px', textAlign: 'center', fontSize: '11px', fontWeight: '700', color: '#7c3aed', textTransform: 'uppercase', width: 90 }}>{selectedBranch === 'primary' ? 'Tutorial Pass' : 'MCQ Pass'}</th>
+                    <th style={{ padding: '10px 8px', textAlign: 'center', fontSize: '11px', fontWeight: '700', color: '#475569', textTransform: 'uppercase', width: 75 }}>Total</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {(classSubjects || []).map(sub => {
-                    const rule   = rules[sub] || { cqTotal: 70, cqPass: 23, mcqTotal: 30, mcqPass: 10, hasMcq: true };
-                    const hasMcq = rule.hasMcq !== false;
-                    const combined = Number(rule.cqTotal || 0) + (hasMcq ? Number(rule.mcqTotal || 0) : 0);
-                    const inputStyle = { width: '70px', padding: '5px 6px', borderRadius: '6px', border: '1px solid #cbd5e1', textAlign: 'center', fontWeight: '700', fontSize: 13 };
+                  {modalSubjects.length === 0 ? (
+                    <tr>
+                      <td colSpan={8} style={{ padding: '30px 14px', textAlign: 'center', color: '#94a3b8', fontSize: '13px', fontWeight: '600' }}>
+                        No subjects available for this class. Add a subject above to proceed.
+                      </td>
+                    </tr>
+                  ) : (
+                    modalSubjects.map(sub => {
+                      const rule = rules[sub] || { included: true, cqTotal: 70, cqPass: 23, mcqTotal: 30, mcqPass: 10, hasMcq: true };
+                      const isIncluded = rule.included !== false;
+                      const hasMcq = rule.hasMcq !== false;
+                      const combined = Number(rule.cqTotal || 0) + (hasMcq ? Number(rule.mcqTotal || 0) : 0);
+                      const isCustom = customSubjects.includes(sub);
+                      const inputStyle = { width: '70px', padding: '5px 6px', borderRadius: '6px', border: '1px solid #cbd5e1', textAlign: 'center', fontWeight: '700', fontSize: 13 };
 
-                    return (
-                      <tr key={sub} style={{ borderBottom: '1px solid #e2e8f0' }}>
-                        <td style={{ padding: '10px 14px', fontWeight: '600', color: '#1e293b' }}>{sub}</td>
-
-                        {/* CQ Total */}
-                        <td style={{ padding: '8px 8px', textAlign: 'center' }}>
-                          <input
-                            type="number" min="1" max="500"
-                            style={inputStyle}
-                            value={rule.cqTotal ?? 70}
-                            onChange={e => handleRuleChange(sub, 'cqTotal', e.target.value)}
-                            required
-                          />
-                        </td>
-
-                        {/* CQ Pass */}
-                        <td style={{ padding: '8px 8px', textAlign: 'center' }}>
-                          <input
-                            type="number" min="0" max={rule.cqTotal ?? 70}
-                            style={{ ...inputStyle, borderColor: Number(rule.cqPass) > Number(rule.cqTotal) ? '#fca5a5' : '#cbd5e1' }}
-                            value={rule.cqPass ?? 23}
-                            onChange={e => handleRuleChange(sub, 'cqPass', e.target.value)}
-                            required
-                          />
-                        </td>
-
-                        {/* MCQ toggle */}
-                        <td style={{ padding: '8px 8px', textAlign: 'center' }}>
-                          <label style={{ display: 'inline-flex', alignItems: 'center', gap: 5, cursor: 'pointer' }}>
+                      return (
+                        <tr key={sub} style={{ borderBottom: '1px solid #e2e8f0', opacity: isIncluded ? 1 : 0.45, background: isIncluded ? '#fff' : '#f1f5f9' }}>
+                          {/* Include Checkbox */}
+                          <td style={{ padding: '8px 10px', textAlign: 'center' }}>
                             <input
                               type="checkbox"
-                              checked={hasMcq}
-                              onChange={e => handleRuleChange(sub, 'hasMcq', e.target.checked ? '1' : '0')}
-                              style={{ width: 16, height: 16, accentColor: '#7c3aed', cursor: 'pointer' }}
+                              checked={isIncluded}
+                              onChange={e => handleRuleChange(sub, 'included', e.target.checked)}
+                              style={{ width: 17, height: 17, cursor: 'pointer', accentColor: '#1d4ed8' }}
                             />
-                            <span style={{ fontSize: 11, color: hasMcq ? '#7c3aed' : '#94a3b8', fontWeight: 700 }}>{hasMcq ? 'ON' : 'OFF'}</span>
-                          </label>
-                        </td>
+                          </td>
 
-                        {/* MCQ Total */}
-                        <td style={{ padding: '8px 8px', textAlign: 'center' }}>
-                          <input
-                            type="number" min="0" max="500"
-                            disabled={!hasMcq}
-                            style={{ ...inputStyle, opacity: hasMcq ? 1 : 0.35, cursor: hasMcq ? 'auto' : 'not-allowed' }}
-                            value={rule.mcqTotal ?? 30}
-                            onChange={e => handleRuleChange(sub, 'mcqTotal', e.target.value)}
-                          />
-                        </td>
+                          {/* Subject Name */}
+                          <td style={{ padding: '10px 14px', fontWeight: '600', color: '#1e293b' }}>
+                            <span style={{ display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
+                              {sub}
+                              {isCustom && (
+                                <button
+                                  type="button"
+                                  onClick={() => handleRemoveCustomSubject(sub)}
+                                  style={{ border: 'none', background: '#fee2e2', color: '#dc2626', borderRadius: '50%', width: 18, height: 18, fontSize: 11, cursor: 'pointer', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', fontWeight: 800 }}
+                                  title="Remove Subject"
+                                >
+                                  ✕
+                                </button>
+                              )}
+                            </span>
+                          </td>
 
-                        {/* MCQ Pass */}
-                        <td style={{ padding: '8px 8px', textAlign: 'center' }}>
-                          <input
-                            type="number" min="0" max={rule.mcqTotal ?? 30}
-                            disabled={!hasMcq}
-                            style={{ ...inputStyle, opacity: hasMcq ? 1 : 0.35, cursor: hasMcq ? 'auto' : 'not-allowed', borderColor: hasMcq && Number(rule.mcqPass) > Number(rule.mcqTotal) ? '#fca5a5' : '#cbd5e1' }}
-                            value={rule.mcqPass ?? 10}
-                            onChange={e => handleRuleChange(sub, 'mcqPass', e.target.value)}
-                          />
-                        </td>
+                          {/* CQ Total */}
+                          <td style={{ padding: '8px 8px', textAlign: 'center' }}>
+                            <input
+                              type="number" min="1" max="500"
+                              disabled={!isIncluded}
+                              style={inputStyle}
+                              value={rule.cqTotal ?? 70}
+                              onChange={e => handleRuleChange(sub, 'cqTotal', e.target.value)}
+                              required={isIncluded}
+                            />
+                          </td>
 
-                        {/* Combined (read-only) */}
-                        <td style={{ padding: '8px 8px', textAlign: 'center' }}>
-                          <span style={{ fontWeight: 800, color: '#1a2e4a', fontSize: 14 }}>{combined}</span>
-                        </td>
-                      </tr>
-                    );
-                  })}
+                          {/* CQ Pass */}
+                          <td style={{ padding: '8px 8px', textAlign: 'center' }}>
+                            <input
+                              type="number" min="0" max={rule.cqTotal ?? 70}
+                              disabled={!isIncluded}
+                              style={{ ...inputStyle, borderColor: isIncluded && Number(rule.cqPass) > Number(rule.cqTotal) ? '#fca5a5' : '#cbd5e1' }}
+                              value={rule.cqPass ?? 23}
+                              onChange={e => handleRuleChange(sub, 'cqPass', e.target.value)}
+                              required={isIncluded}
+                            />
+                          </td>
+
+                          {/* MCQ toggle */}
+                          <td style={{ padding: '8px 8px', textAlign: 'center' }}>
+                            <label style={{ display: 'inline-flex', alignItems: 'center', gap: 5, cursor: isIncluded ? 'pointer' : 'not-allowed' }}>
+                              <input
+                                type="checkbox"
+                                disabled={!isIncluded}
+                                checked={hasMcq}
+                                onChange={e => handleRuleChange(sub, 'hasMcq', e.target.checked ? '1' : '0')}
+                                style={{ width: 16, height: 16, accentColor: '#7c3aed', cursor: isIncluded ? 'pointer' : 'not-allowed' }}
+                              />
+                              <span style={{ fontSize: 11, color: hasMcq && isIncluded ? '#7c3aed' : '#94a3b8', fontWeight: 700 }}>{hasMcq ? 'ON' : 'OFF'}</span>
+                            </label>
+                          </td>
+
+                          {/* MCQ Total */}
+                          <td style={{ padding: '8px 8px', textAlign: 'center' }}>
+                            <input
+                              type="number" min="0" max="500"
+                              disabled={!isIncluded || !hasMcq}
+                              style={{ ...inputStyle, opacity: isIncluded && hasMcq ? 1 : 0.35, cursor: isIncluded && hasMcq ? 'auto' : 'not-allowed' }}
+                              value={rule.mcqTotal ?? 30}
+                              onChange={e => handleRuleChange(sub, 'mcqTotal', e.target.value)}
+                            />
+                          </td>
+
+                          {/* MCQ Pass */}
+                          <td style={{ padding: '8px 8px', textAlign: 'center' }}>
+                            <input
+                              type="number" min="0" max={rule.mcqTotal ?? 30}
+                              disabled={!isIncluded || !hasMcq}
+                              style={{ ...inputStyle, opacity: isIncluded && hasMcq ? 1 : 0.35, cursor: isIncluded && hasMcq ? 'auto' : 'not-allowed', borderColor: isIncluded && hasMcq && Number(rule.mcqPass) > Number(rule.mcqTotal) ? '#fca5a5' : '#cbd5e1' }}
+                              value={rule.mcqPass ?? 10}
+                              onChange={e => handleRuleChange(sub, 'mcqPass', e.target.value)}
+                            />
+                          </td>
+
+                          {/* Combined (read-only) */}
+                          <td style={{ padding: '8px 8px', textAlign: 'center' }}>
+                            <span style={{ fontWeight: 800, color: '#1a2e4a', fontSize: 14 }}>{combined}</span>
+                          </td>
+                        </tr>
+                      );
+                    })
+                  )}
                 </tbody>
               </table>
             </div>

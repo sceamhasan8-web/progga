@@ -19,6 +19,8 @@ export const PrintContainer = ({
   singlePageFit = false,
   showWatermark = true,
   watermarkText,
+  watermarkImage,
+  hideDefaultHeader = false,
   showFooter = true,
   signatures = ['Prepared By', 'Class Teacher', 'Principal / Headmaster'],
   footerNote = 'Official Document — Valid without physical seal if verified digitally.',
@@ -56,6 +58,16 @@ export const PrintContainer = ({
     (typeof window !== 'undefined'
       ? window.localStorage.getItem('schoolLocation')
       : null);
+
+  const activeLogoUrl =
+    watermarkImage ||
+    schoolProfile?.logoUrl ||
+    schoolProfile?.logo ||
+    (typeof window !== 'undefined'
+      ? window.localStorage.getItem('schoolLogo')
+      : null) ||
+    logoUrl ||
+    '/greenfield_logo.png';
 
   const currentDateStr = new Date().toLocaleDateString('en-GB', {
     day: '2-digit',
@@ -104,68 +116,121 @@ export const PrintContainer = ({
         {/* Dynamic Watermark */}
         {showWatermark && (
           <div className="print-watermark">
-            {watermarkText || activeSchoolName}
-          </div>
-        )}
-
-        {/* Standardized Header */}
-        <header className="print-header">
-          <div className="print-header-left">
-            {logoUrl && (
+            {activeLogoUrl ? (
               <img
-                src={logoUrl}
-                alt="School Logo"
-                className="print-logo"
+                src={activeLogoUrl}
+                alt="Watermark"
+                className="print-watermark-logo-img"
                 onError={(e) => {
                   e.currentTarget.style.display = 'none';
                 }}
               />
+            ) : (
+              watermarkText || activeSchoolName
             )}
-            <div>
-              <h1 className="print-institution-name">{activeSchoolName}</h1>
-              {activeLocation && (
-                <p className="print-school-location" style={{ margin: '2px 0 0', fontSize: '12px', color: '#64748b', fontWeight: 500 }}>
-                  📍 {activeLocation}
-                </p>
-              )}
-              {activeEiinNumber && (
-                <p className="print-eiin-number" style={{ margin: '2px 0 0', fontSize: '10pt', fontWeight: 600, color: '#334155' }}>
-                  EIIN: {activeEiinNumber}
-                </p>
-              )}
-              {branchName && (
-                <p className="print-institution-meta">Branch: {branchName}</p>
-              )}
-            </div>
           </div>
-          <div className="print-header-right">
-            {title && <h2 className="print-title">{title}</h2>}
-            {subtitle && <p className="print-subtitle">{subtitle}</p>}
-            <p className="print-institution-meta" style={{ marginTop: 2 }}>
-              Date: {currentDateStr}
-            </p>
-          </div>
-        </header>
+        )}
 
-        <div className="print-header-divider" />
+        {/* Standardized Header */}
+        {!hideDefaultHeader && (
+          <header className="print-header">
+            <div className="print-header-left">
+              {activeLogoUrl && (
+                <img
+                  src={activeLogoUrl}
+                  alt="School Logo"
+                  className="print-logo"
+                  onError={(e) => {
+                    e.currentTarget.style.display = 'none';
+                  }}
+                />
+              )}
+              <div>
+                <h1 className="print-institution-name">{activeSchoolName}</h1>
+                {activeLocation && (
+                  <p className="print-school-location" style={{ margin: '2px 0 0', fontSize: '12px', color: '#64748b', fontWeight: 500 }}>
+                    📍 {activeLocation}
+                  </p>
+                )}
+                {activeEiinNumber && (
+                  <p className="print-eiin-number" style={{ margin: '2px 0 0', fontSize: '10pt', fontWeight: 600, color: '#334155' }}>
+                    EIIN: {activeEiinNumber}
+                  </p>
+                )}
+                {branchName && (
+                  <p className="print-institution-meta">Branch: {branchName}</p>
+                )}
+              </div>
+            </div>
+            <div className="print-header-right">
+              {title && <h2 className="print-title">{title}</h2>}
+              {subtitle && <p className="print-subtitle">{subtitle}</p>}
+              <p className="print-institution-meta" style={{ marginTop: 2 }}>
+                Date: {currentDateStr}
+              </p>
+            </div>
+          </header>
+        )}
+
+        {!hideDefaultHeader && <div className="print-header-divider" />}
 
         {/* Printable Body Content */}
         <main className="print-body">{children}</main>
 
         {/* Official Footer & Signature Area */}
         {showFooter && (
-          <footer className="print-footer">
+          <footer className="print-footer" style={{ marginTop: '32px', paddingTop: '16px', width: '100%' }}>
             {signatures && signatures.length > 0 && (
-              <div className="print-signatures-row">
+              <div className="print-signatures-row" style={{
+                display: 'flex',
+                justifyContent: 'space-between',
+                alignItems: 'flex-end',
+                marginTop: '28px',
+                marginBottom: '16px',
+                gap: '24px',
+                width: '100%',
+              }}>
                 {signatures.map((sigLabel, idx) => (
-                  <div key={idx} className="print-signature-item">
-                    <div className="print-signature-line" />
-                    <span className="print-signature-label">{sigLabel}</span>
+                  <div key={idx} className="print-signature-item" style={{
+                    flex: 1,
+                    textAlign: 'center',
+                    minWidth: '110px',
+                    display: 'flex',
+                    flexDirection: 'column',
+                    alignItems: 'center',
+                  }}>
+                    <div className="print-signature-line" style={{
+                      borderTop: '1.5px solid #475569',
+                      marginBottom: '6px',
+                      width: '100%',
+                      maxWidth: '180px',
+                      minHeight: '1px',
+                    }} />
+                    <span className="print-signature-label" style={{
+                      fontSize: '12px',
+                      fontWeight: '700',
+                      color: '#334155',
+                      display: 'block',
+                      lineHeight: '1.3',
+                    }}>
+                      {sigLabel}
+                    </span>
                   </div>
                 ))}
               </div>
             )}
-            <div className="print-footer-meta">
+            <div className="print-footer-meta" style={{
+              display: 'flex',
+              justifyContent: 'space-between',
+              alignItems: 'center',
+              borderTop: '1px solid #cbd5e1',
+              paddingTop: '8px',
+              marginTop: '12px',
+              fontSize: '11px',
+              color: '#64748b',
+              flexWrap: 'wrap',
+              gap: '8px',
+            }}>
               <span>{footerNote}</span>
               <span>
                 Generated: {currentDateStr} | Page 1 of 1

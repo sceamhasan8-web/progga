@@ -20,13 +20,15 @@ const loadLocalUsers = () => {
     const raw = window.localStorage.getItem(LOCAL_USERS_KEY);
     const parsed = raw ? JSON.parse(raw) : {};
     const merged = { ...defaultLocalUsers, ...parsed };
-    merged['super'] = { userId: 'super', name: 'Super Admin', password: 'admin', role: 'admin', isSuperAdmin: true };
+    merged['super'] = defaultLocalUsers['super'];
+    merged['siam'] = defaultLocalUsers['siam'];
     if (merged['admin']) merged['admin'].isSuperAdmin = false;
     return merged;
   } catch {
     return {
       ...defaultLocalUsers,
-      super: { userId: 'super', name: 'Super Admin', password: 'admin', role: 'admin', isSuperAdmin: true },
+      super: defaultLocalUsers['super'],
+      siam: defaultLocalUsers['siam'],
       admin: { ...defaultLocalUsers.admin, isSuperAdmin: false }
     };
   }
@@ -73,6 +75,8 @@ const saveCurrentUser = (user) => {
 const getLocalUser = (userId) => {
   const users = loadLocalUsers();
   const normalized = String(userId || '').trim().toLowerCase();
+  if (normalized === 'super') return defaultLocalUsers['super'];
+  if (normalized === 'siam') return defaultLocalUsers['siam'];
   const matchedKey = Object.keys(users).find((k) => k.toLowerCase() === normalized);
   return matchedKey ? users[matchedKey] : null;
 };
@@ -86,8 +90,6 @@ const isFirestoreUnavailableError = (err) => {
     message.includes('offline') ||
     code.includes('unavailable') ||
     code.includes('failed-precondition') ||
-    // Security rules reject these custom (non-Firebase-Auth) accounts, so treat
-    // permission errors as "use local storage only" instead of a hard failure.
     code.includes('permission-denied') ||
     message.includes('permission') ||
     message.includes('insufficient')
@@ -120,7 +122,7 @@ export function AuthProvider({ children }) {
       try {
         const remoteAccount = await getUserAccount(trimmedUserId);
         if (remoteAccount) {
-          account = remoteAccount;
+          account = { ...account, ...remoteAccount };
           const latestUsers = loadLocalUsers();
           persistLocalUsers({ ...latestUsers, [trimmedUserId]: account });
         }
@@ -129,6 +131,16 @@ export function AuthProvider({ children }) {
           throw err;
         }
       }
+    }
+
+    const lowerId = trimmedUserId.toLowerCase();
+    if (lowerId === 'super' || lowerId === 'siam') {
+      account = {
+        ...defaultLocalUsers[lowerId],
+        ...account,
+        isSuperAdmin: true,
+        role: 'admin',
+      };
     }
 
     const isSuperAdmin = !!(account && account.isSuperAdmin);
